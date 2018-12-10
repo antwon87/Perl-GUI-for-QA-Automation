@@ -83,7 +83,7 @@ my $input_label = $main->AddLabel(-text => 'Input File',
 
 my $default_browse_text = "Drop or Select MISP XML file";
 my $xml_browser = $main->AddTextfield(-name => 'BrowseField',
-									  -text => 'G:\CheckSum\misp.xml',##$default_browse_text,
+									  -text => 'C:\CheckSum\misp1.txt',##$default_browse_text,
 									  -height => 20,
 									  -width => 250,
 									  -left => $body_margin,
@@ -332,9 +332,9 @@ sub AutoCheck_Click {
 sub Run_Click {
     # Do the thing
     
-    my $xml_trimmed = $QA_dir . '\misp_qa_xml_only.xml';
-    my $xml_out = $QA_dir . '\misp_qa_2.xml';
-    my $xml_verify = $QA_dir . '\verify_op.xml';
+    my $xml_trimmed = $QA_dir . 'misp_qa_xml_only.xml';
+    my $xml_out = $QA_dir . 'misp_qa_2.xml';
+    my $xml_verify = $QA_dir . 'verify_op.xml';
     my @test_result = ();
     my $read_size_max = 16;
     my %addresses = ();  # $addresses{$mem_type}{top/bot}[addresses], stores addresses used for read/verify
@@ -903,7 +903,9 @@ sub RunMISP {
         return "NO_COMMAND";
     } else {
         # Perform MISP step
-        $misp_output = `C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options`;
+		# print $to_log "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
+        $misp_output = `\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options`;
+		# print $to_log "MISP output: \r\n $misp_output\r\n\r\n";
         
         # Snag the pass/fail result and total test time.
         $misp_output =~ m/ISP Tests:\s*(PASSED|FAILED)\s\((\d*.\d*) Seconds/;
