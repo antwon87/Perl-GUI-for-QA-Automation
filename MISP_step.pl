@@ -12,26 +12,27 @@ use List::MoreUtils qw( minmax );
 use Hex::Record;
 use Cwd qw( getcwd );
 
-my $misp_output = "";
+### GLOBAL ###
+my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord" );
 my %commands = ();
 my %missing_commands = ();
+my $misp_output = "";
+my %memory_types = ();
+my $error_count = 0;
+my $modified_data_file = $QA_dir . "QA_data";
+my $QA_dir = 'C:\CheckSum\MW_QA\\';
+my $log = "";  # This string will contain all log data to be displayed in the GUI.
 
 # my $xml_dir = (fileparse($xml_raw))[1];
-my $QA_dir = 'C:\CheckSum\MW_QA\\';
 my $xml_trimmed = $QA_dir . '\misp_qa_xml_only.xml';
 my $xml_out = $QA_dir . '\misp_qa_2.xml';
 my $xml_verify = $QA_dir . '\verify_op.xml';
-my $modified_data_file = $QA_dir . "QA_data";
-my $error_count = 0;
-my %memory_types = ();
 my %blank_data = ();
 my @test_result = ();
 my $read_size_max = 16;
 my %addresses = ();  # $addresses{$mem_type}{top/bot}[addresses], stores addresses used for read/verify
 my %read_once = ();
 my %data_files = ();  # $data_files{$mem_type}
-my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord" );
-my $log = "";  # This string will contain all log data to be displayed in the GUI.
 
 ###  TO DO: SET FROM GUI  ####
 my $full_sequence = "";
@@ -496,7 +497,7 @@ open my $to_log, '>', \$log or die "Can't open \$to_log: $!";
                 
                 foreach my $i (0 .. $#data) {
                     my $offset = ($i % $bytes_per_read) * 2;
-                    $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse;
+                    $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
                     $data[$i] = substr($data[$i], $offset, 2);
                 }
 
@@ -565,7 +566,7 @@ sub RunMISP {
     my $xml = shift;
     my $options = shift // "";
     $misp_output = "";  # Reset output for new run.
-    @test_result = ();  # Reset test result for new run.
+    # @test_result = ();  # Reset test result for new run.
     
     if (not exists $commands{$command}) {
         if (not exists $missing_commands{$command}) {
