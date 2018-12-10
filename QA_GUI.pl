@@ -8,7 +8,7 @@ use File::Path qw( make_path );
 use List::Util qw ( min );
 use List::MoreUtils qw( minmax );
 use Hex::Record;
-use Cwd qw( getcwd );
+use Cwd qw( getcwd abs_path);
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 
@@ -57,8 +57,9 @@ my $main = Win32::GUI::Window->new(-name => 'Main',
                                    -onDropFiles => \&Main_DropFiles,
                                    -onResize => \&Main_Resize);
 
-my $small_icon = new Win32::GUI::Icon('checkmark_new_small.ico');
-my $big_icon = new Win32::GUI::Icon('checkmark_new.ico');
+my $script_dir = (fileparse($0))[1];  # The path where QA_GUI.pl (and icons) exists
+my $small_icon = new Win32::GUI::Icon($script_dir . 'checkmark_new_small.ico');
+my $big_icon = new Win32::GUI::Icon($script_dir . 'checkmark_new.ico');
 $main->SetIcon($small_icon, 0);
 $main->SetIcon($big_icon, 1);
 
