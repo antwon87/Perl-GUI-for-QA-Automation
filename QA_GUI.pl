@@ -12,6 +12,10 @@ use Cwd qw( getcwd abs_path);
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 
+# Hide the DOS window that shows up when you start by double clicking.
+# my $DOS = Win32::GUI::GetPerlWindow();
+# Win32::GUI::Hide($DOS);
+
 #####################
 
 ### MISP Variables ##
@@ -64,7 +68,7 @@ $main->SetIcon($small_icon, 0);
 $main->SetIcon($big_icon, 1);
 
 my $log_window = Win32::GUI::Window->new(-name => 'Log',
-                                         -parent => $main,
+                                         # -parent => $main,
                                          -text => 'Results',
                                          -width => $main->Width(),
                                          -height => $main->Height());
@@ -187,7 +191,7 @@ my $run_button = $main->AddButton(-name => 'Run',
 
 my $log_text = $log_window->AddTextfield(-name => 'LogText', 
                                          -readonly => 1,
-                                         -text => "blue",
+                                         -text => "",
                                          -multiline => 1,
                                          -vscroll => 1);
 
@@ -236,7 +240,7 @@ sub Main_Terminate {
 
 sub Log_Terminate {
     $log_window->Hide();
-    return 0;
+    return 1;
 }
 
 sub BrowseButton_Click {
@@ -327,6 +331,7 @@ sub AutoCheck_Click {
         $config_check->Enable();
         # $full_text->Enable();
     }
+    
     return 1;
 }
 
@@ -344,6 +349,23 @@ sub Run_Click {
     my $reverse_endian = $endian->Checked();
     $bytes_per_read = $read_bytes->Text(); 
     my $full_sequence = $full_text->Text();
+    
+    # Clear the log window for a new run. Maybe...
+    # $log_text->Change(-text => '');
+    
+    # $log_text->Append("foo") if $page_erase_check->Checked();
+    # return 1 if $verify_check->Checked();
+    
+    # Show the log window if it is not already shown.
+    if (not $log_window->IsVisible()) {
+        $log_window->Resize($w, $h);
+        $log_window->Move($main->Left() + 20, $main->Top() + 20);
+        $log_text->Change(-height => $log_window->ScaleHeight() - 10,
+                          -width => $log_window->ScaleWidth() - 10,
+                          -top => 5,
+                          -left => 5);
+        $log_window->Show();
+    }
     
     # Open the "file handle" for printing to the log string.
     open $to_log, '>', \$log or die "Can't open \$to_log: $!\n";
@@ -432,7 +454,8 @@ sub Run_Click {
     if (not exists $commands{"--read"}) {
         if (not exists $missing_commands{"--read"}) {
             $missing_commands{"--read"} = 1;
-            print $to_log "WARNING: No --read command in MISP setup. Related tests skipped. \r\n\r\n";
+            # print $to_log "WARNING: No --read command in MISP setup. Related tests skipped. \r\n\r\n";
+            $log_text->Append("WARNING: No --read command in MISP setup. Related tests skipped. \r\n");
         }
     } else {
         foreach my $mem_type (keys %memory_types) {
@@ -469,7 +492,8 @@ sub Run_Click {
     if (not exists $commands{"-v"}) {
         if (not exists $missing_commands{"-v"}) {
             $missing_commands{"-v"} = 1;
-            print $to_log "WARNING: No -v command in MISP setup. Related tests skipped. \r\n\r\n";
+            # print $to_log "WARNING: No -v command in MISP setup. Related tests skipped. \r\n\r\n";
+            $log_text->Append("\r\nWARNING: No -v command in MISP setup. Related tests skipped. \r\n");
         }
     } else {
         foreach my $mem_type (keys %memory_types) {
@@ -506,14 +530,17 @@ sub Run_Click {
 
     if (not exists $commands{"-k"}) {
         $missing_commands{"-k"} = 1;
-        print $to_log "WARNING: No -k command in MISP setup. ID check skipped. Does this chip have an ID? \r\n\r\n";
+        # print $to_log "WARNING: No -k command in MISP setup. ID check skipped. Does this chip have an ID? \r\n\r\n";
+        $log_text->Append("\r\nWARNING: No -k command in MISP setup. ID check skipped. Does this chip have an ID? \r\n");
     } else {
         # First test uses base XML file, presumably with the correct device ID
-        # $twig->print_to_file($xml_out, PrettyPrint => "indented" );
+        $log_text->Append("Running ID tests...\r\n");
 
         @test_result = RunMISP("-k", $xml_out);
+        $log_text->Append("\tTest with proper ID: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Device ID test failed with given ID. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Device ID test failed with given ID. See log for details.\r\n";
+            # $log_text->Append("ERROR: Device ID test failed with given ID. See log for details.\r\n\r\n");
             $error_count++;
         }
 
@@ -527,8 +554,10 @@ sub Run_Click {
 
         # Now run the test
         @test_result = RunMISP("-k", $xml_out);
+        $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
-            print $to_log "ERROR: Device ID test passed with altered ID. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Device ID test passed with altered ID. See log for details.\r\n";
+            # $log_text->Append("ERROR: Device ID test passed with altered ID. See log for details.\r\n\r\n");
             $error_count++;
         }
     }
@@ -542,27 +571,37 @@ sub Run_Click {
     if (not exists $commands{"--chiperase"} && not exists $commands{"-e"}) {
         $missing_commands{"--chiperase"} = 1;
         $missing_commands{"-e"} = 1;
-        print $to_log "WARNING: No chip erase command in MISP setup. Blank tests skipped. Can this chip be erased? \r\n\r\n";
+        # print $to_log "WARNING: No chip erase command in MISP setup. Blank tests skipped. Can this chip be erased? \r\n\r\n";
+		$log_text->Append("\r\nWARNING: No chip erase command in MISP setup. Blank tests skipped. Can this chip be erased? \r\n");
+        
     } else {
         # Erase the chip
+        $log_text->Append("\r\nRunning erase tests...\r\n");
+        
         my $erase_command = (exists $commands{"--chiperase"} ? "--chiperase" : "-e");
         @test_result = RunMISP($erase_command, $xml_out);
+        $log_text->Append("\tErase operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Chip erase failed. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Chip erase failed. See log for details.\r\n";
+            # $log_text->Append("ERROR: Chip erase failed. See log for details.\r\n\r\n");
             $error_count++;
         }
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
+        $log_text->Append("\tBlank check while blank: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Blank check failed. Chip not blank after erase. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Blank check failed. Chip not blank after erase. See log for details.\r\n";
+            # $log_text->Append("ERROR: Blank check failed. Chip not blank after erase. See log for details.\r\n\r\n");
             $error_count++;
         }
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
-        if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Verify succeeded after erase. See log for details.\r\n\r\n";
+        $log_text->Append("\tVerify while blank: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
+        if ($test_result[0] eq "PASSED") {
+            print $to_log "ERROR: Verify succeeded after erase. See log for details.\r\n";
+            # $log_text->Append("ERROR: Verify succeeded after erase. See log for details.\r\n\r\n");
             $error_count++;
         }
         
@@ -600,13 +639,18 @@ sub Run_Click {
                 
                 # Display read errors if any occurred.
                 if (scalar (keys %read_errors)) {
+                    $log_text->Append("\tRead blank data: FAILED\r\n");
                     print $to_log "ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                     "    Data read was $read_errors{$_}.\n" foreach (keys %read_errors);
-                    print $to_log "\r\n";
+                    # $log_text->Append("ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
+                    # "    Data read was $read_errors{$_}.\n") foreach (keys %read_errors);
+                    # print $to_log "\r\n";
+                    # $log_text->Append("\r\n\r\n");
+                } else {
+                    $log_text->Append("\tRead blank data: PASSED\r\n");
                 }
             }
         }
-        
     }
 
     #-------------------#
@@ -617,33 +661,44 @@ sub Run_Click {
 
     if (not exists $commands{"-p"}) {
         $missing_commands{"-p"} = 1;
-        print $to_log "WARNING: No -p command in MISP setup. Programming tests skipped. Can this chip be programmed? \r\n\r\n";
+        # print $to_log "WARNING: No -p command in MISP setup. Programming tests skipped. Can this chip be programmed? \r\n\r\n";
+		$log_text->Append("\r\nWARNING: No -p command in MISP setup. Programming tests skipped. Can this chip be programmed? \r\n");
     } else {
         # Program the chip
+        $log_text->Append("\r\nRunning programming tests...\r\n");
+        
         @test_result = RunMISP("-p", $xml_out);
+        $log_text->Append("\tProgram operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Programming failed. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Programming failed. See log for details.\r\n";
+            # $log_text->Append("ERROR: Programming failed. See log for details.\r\n\r\n");
             $error_count++;
         }
         
         # Program it again to make sure you can program a pre-programmed chip
         @test_result = RunMISP("-p", $xml_out);
+        $log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Programming failed when the chip is already programmed. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Programming failed when the chip is already programmed. See log for details.\r\n";
+            # $log_text->Append("ERROR: Programming failed when the chip is already programmed. See log for details.\r\n\r\n");
             $error_count++;
         }
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
+        $log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
-            print $to_log "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n";
+            # $log_text->Append("ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n\r\n");
             $error_count++;
         }
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
+        $log_text->Append("\tVerify while programmed: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Verify failed after programming. See log for details.\r\n\r\n";
+            print $to_log "ERROR: Verify failed after programming. See log for details.\r\n";
+            # $log_text->Append("ERROR: Verify failed after programming. See log for details.\r\n\r\n");
             $error_count++;
         }
         
@@ -685,8 +740,10 @@ sub Run_Click {
                     
                     # Verify with the modified file, expecting a failure.
                     @test_result = RunMISP("-v", $xml_verify);
+                    $log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
                     if ($test_result[0] eq "PASSED") {
-                        print $to_log "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n\r\n";
+                        print $to_log "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
+                        # $log_text->Append("ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n\r\n");
                         $error_count++;
                     }
                 }
@@ -699,8 +756,10 @@ sub Run_Click {
         # Write config words if a -w command exists in the XML
         if (exists $commands{"-w"}) {
             @test_result = RunMISP("-w", $xml_out);
+            $log_text->Append("\tWrite config words: $test_result[0]\r\n");
             if ($test_result[0] eq "FAILED") {
-                print $to_log "ERROR: Config word write failed. See log for details.\r\n\r\n";
+                print $to_log "ERROR: Config word write failed. See log for details.\r\n";
+                # $log_text->Append("ERROR: Config word write failed. See log for details.\r\n\r\n");
                 $error_count++;
             }
         }
@@ -763,9 +822,15 @@ sub Run_Click {
                 
                 # Display read errors if any occurred.
                 if (scalar (keys %read_errors)) {
-                    print $to_log "ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\n" . 
-                        "    Data read was $read_errors{$_}.\n" foreach (keys %read_errors);
-                    print $to_log "\r\n";
+                    $log_text->Append("\tRead programmed data: FAILED\r\n");
+                    print $to_log "ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
+                        "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
+                    # $log_text->Append("ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
+                        # "    Data read was $read_errors{$_}.\r\n") foreach (keys %read_errors);
+                    # print $to_log "\r\n";
+                    # $log_text->Append("\r\n");
+                } else {
+                    $log_text->Append("\tRead programmed data: PASSED\r\n");
                 }
             }
         }
@@ -781,15 +846,23 @@ sub Run_Click {
     #-------------------#
     
     if ($full_sequence eq $default_full_text) {
-        print $to_log "ERROR: No full sequence set up. This probably isn't a good choice.\r\n\r\n";
+        print $to_log "ERROR: No full sequence set up. This probably isn't a good choice.\r\n";
+        # $log_text->Append("\r\nERROR: No full sequence set up. This probably isn't a good choice.\r\n\");
         $error_count++;
     } else {
+        $log_text->Append("\r\nRunning full sequence...\r\n");
+    
         @test_result = RunMISP($full_sequence, $xml_out);
+        $log_text->Append("\tFull sequence: $test_result[0]");
         if ($test_result[0] eq "FAILED") {
-            print $to_log "ERROR: Full sequence failed. See log for details.\r\n\r\n";
+            $log_text->Append("\r\n");
+            print $to_log "ERROR: Full sequence failed. See log for details.\r\n";
+            # $log_text->Append("ERROR: Full sequence failed. See log for details.\r\n\r\n");
             $error_count++;
         } elsif ($test_result[0] eq "PASSED") {
-            print $to_log "Full programming sequence passed in $test_result[1] seconds.\r\n\r\n";
+            # print $to_log "Full programming sequence passed in $test_result[1] seconds.\r\n\r\n";
+            # $log_text->Append("Full programming sequence passed in $test_result[1] seconds.\r\n\r\n");
+            $log_text->Append(" in $test_result[1] seconds\r\n");
         }
         ### TO DO: Get an output log with warnings in it to see the format. Report any warnings here.
         # if ($misp_output =~ m/WARNING: 
@@ -804,22 +877,14 @@ sub Run_Click {
 
     #-------------------#
     
-    print $to_log "SUMMARY: There " . ($error_count == 1 ? "was" : "were") . 
+    # print $to_log "SUMMARY: There " . ($error_count == 1 ? "was" : "were") . 
+        # " $error_count error" . ($error_count == 1 ? "" : "s") . 
+        # "." . ($error_count == 0 ? " Ship it.\r\n" : "\r\n\r\n\r\n");  
+        
+    $log_text->Append("\r\n" . $log);
+    $log_text->Append("\r\nSUMMARY: There " . ($error_count == 1 ? "was" : "were") . 
         " $error_count error" . ($error_count == 1 ? "" : "s") . 
-        "." . ($error_count == 0 ? " Ship it.\r\n" : "\r\n");    
-    
-    # Set the log window text to the new log string.
-    # If the window is hidden, show it in the default location.
-    $log_text->Change(-text => $log);
-    if (not $log_window->IsVisible()) {
-        $log_window->Resize($w, $h);
-        $log_window->Move($main->Left() + 20, $main->Top() + 20);
-        $log_text->Change(-height => $log_window->ScaleHeight() - 10,
-                          -width => $log_window->ScaleWidth() - 10,
-                          -top => 5,
-                          -left => 5);
-        $log_window->Show();
-    }
+        "." . ($error_count == 0 ? " Ship it.\r\n" : "\r\n\r\n\r\n"));
     
     # Reset stuff before next run.
     $error_count = 0;
@@ -899,7 +964,8 @@ sub RunMISP {
     if (not exists $commands{$command}) {
         if (not exists $missing_commands{$command}) {
             $missing_commands{$command} = 1;
-            print $to_log "WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n";
+            # print $to_log "WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n";
+            $log_text->Append("WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n");
         }
         return "NO_COMMAND";
     } else {
@@ -911,7 +977,8 @@ sub RunMISP {
         # Snag the pass/fail result and total test time.
         $misp_output =~ m/ISP Tests:\s*(PASSED|FAILED)\s\((\d*.\d*) Seconds/;
         if (not defined $1) {
-            print $to_log "ERROR: $command test incomplete, no pass or fail recorded. See log for details.\r\n\r\n";
+            # print $to_log "ERROR: $command test incomplete, no pass or fail recorded. See log for details.\r\n\r\n";
+            $log_text->Append("ERROR: $command test incomplete, no pass or fail recorded. See log for details.\r\n\r\n");
             $error_count++;
             return "ERROR";
         }
@@ -987,7 +1054,8 @@ sub RunMISP {
             
             close $data_file;
         } else {
-            print $to_log "ERROR: Format not recognized for data file: \"$file\".\r\n\r\n";
+            # print $to_log "ERROR: Format not recognized for data file: \"$file\".\r\n\r\n";
+            $log_text->Append("ERROR: Format not recognized for data file: \"$file\".\r\n\r\n");
             $error_count++;
             return 1;
         }
@@ -1026,7 +1094,8 @@ sub RunMISP {
         foreach my $i (0 .. $#$data_ref) {
             # print $to_log "WARNING: Some addresses in the $num_bytes bytes starting at $addr not found in data file: \"$file\".\n" if not defined $_;
             if (not defined $$data_ref[$i]) {
-                print $to_log "WARNING: Address " . sprintf("%#x", $addr + $i) . " not found in data file: \"$file\".\r\n\r\n";
+                # print $to_log "WARNING: Address " . sprintf("%#x", $addr + $i) . " not found in data file: \"$file\".\r\n\r\n";
+                $log_text->Append("WARNING: Address " . sprintf("%#x", $addr + $i) . " not found in data file: \"$file\".\r\n\r\n");
                 $$data_ref[$i] = "not found";
             }
             
