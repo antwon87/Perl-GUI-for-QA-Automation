@@ -349,9 +349,10 @@ sub Run_Click {
     my $reverse_endian = $endian->Checked();
     $bytes_per_read = $read_bytes->Text(); 
     my $full_sequence = $full_text->Text();
+	# %commands = ();
     
     # Clear the log window for a new run. Maybe...
-    # $log_text->Change(-text => '');
+    $log_text->Change(-text => '');
     
     # $log_text->Append("foo") if $page_erase_check->Checked();
     # return 1 if $verify_check->Checked();
@@ -367,7 +368,7 @@ sub Run_Click {
         $log_window->Show();
     }
     
-    # Open the "file handle" for printing to the log string.
+    # Open the "file handle" for printing to the log string. This is now only used for ERRORs.
     open $to_log, '>', \$log or die "Can't open \$to_log: $!\n";
     
     # Set up commands hash if not auto-detecting commands.
@@ -423,7 +424,7 @@ sub Run_Click {
     my $twig = new XML::Twig( twig_handlers => { Command => \&AddCommand,
                                                  verbosity => \&SetVerbosity,
                                                  blankdata => \&BlankData,
-                                                 Memory => \&MemoryTypes,
+                                                 # Memory => \&MemoryTypes,
                                                  Bank => \&AddBanks,
                                                  DataFile => \&AddDataFiles} );
 
@@ -467,21 +468,21 @@ sub Run_Click {
 
             # If a bank is smaller than the default number of bytes to read, only read as many
             #   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
-            if ($read_size <= $size) {
+            if ($size <= $read_size) {
                 $read_size = $size;
                 $read_once{$mem_type} = 1 if $min_bank == $max_bank;
             }
             
             # Set up hash containing addresses to read at the top of the memory type.
             $addresses{$mem_type}{"top"} = [$min_bank .. $min_bank + $read_size - 1];
-
+		
             # Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
             next if ($read_once{$mem_type});
 
             # Reset variables
             $read_size = $read_size_max;
             $size = $memory_types{$mem_type}{$max_bank};
-            $read_size = $size if ($read_size < $size);
+            $read_size = $size if ($size < $read_size);
             
             # Set up hash containing addresses to read at the bottom of the memory type.
             $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
@@ -568,7 +569,7 @@ sub Run_Click {
 
     #-------------------#
 
-    if (not exists $commands{"--chiperase"} && not exists $commands{"-e"}) {
+    if ((not exists $commands{"--chiperase"}) && (not exists $commands{"-e"})) {
         $missing_commands{"--chiperase"} = 1;
         $missing_commands{"-e"} = 1;
         # print $to_log "WARNING: No chip erase command in MISP setup. Blank tests skipped. Can this chip be erased? \r\n\r\n";
@@ -589,6 +590,7 @@ sub Run_Click {
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
+		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tBlank check while blank: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Blank check failed. Chip not blank after erase. See log for details.\r\n";
@@ -598,6 +600,7 @@ sub Run_Click {
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
+		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tVerify while blank: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Verify succeeded after erase. See log for details.\r\n";
@@ -686,6 +689,7 @@ sub Run_Click {
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
+		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n";
@@ -695,7 +699,9 @@ sub Run_Click {
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
+		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tVerify while programmed: $test_result[0]\r\n");
+		
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Verify failed after programming. See log for details.\r\n";
             # $log_text->Append("ERROR: Verify failed after programming. See log for details.\r\n\r\n");
@@ -774,15 +780,27 @@ sub Run_Click {
                 
                 # Make a string containing the range of addresses to read and the memory type to read from
                 my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"top"}[0], $addresses{$mem_type}{"top"}[-1], $mem_type); 
-                RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
+				RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
                 
-                # Throw the data returned from all addresses into an array.
-                my @data = $misp_output =~ m/Device Memory.*=\s(.*)/g;
-                
+				# Throw the data returned from all addresses into an array.
+                my @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g; # m/Device Memory.*=\s(.*)/g;
+				
+				print "$_\r\n" foreach (@data);
+				
                 # Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
-                my @good_data = ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"top"}[0], scalar @{$addresses{$mem_type}{"top"}});
+                my @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"top"}[0], scalar @{$addresses{$mem_type}{"top"}})};
                 
                 next if $good_data[0] eq "ERROR";            
+
+                # Pick out the proper byte if there are multiple bytes reported for each address.
+				foreach my $i (0 .. $#data) {
+					START HERE. Need to pad with leading zeros if the data isn't the maximum number of digits.
+                    my $offset = ($i % $bytes_per_read) * 2;
+                    $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
+                    $data[$i] = substr($data[$i], $offset, 2);
+                }
+				
+				print "$data[$_] $good_data[$_]\r\n" foreach (0 .. $#data);
                 
                 # Check to make sure the array only contains correct data.
                 foreach my $i (0 .. $#data) {
@@ -790,7 +808,7 @@ sub Run_Click {
                     if (not defined $good_data[$i]) {
                         $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i];
                     } else {                
-                        $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if $data[$i] != $good_data[$i];
+                        $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if hex $data[$i] != hex $good_data[$i];
                     }
                 }
                 
@@ -804,7 +822,13 @@ sub Run_Click {
                 # Throw the data returned from all addresses into an array.
                 @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g;
                 
-                foreach my $i (0 .. $#data) {
+				# Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
+                @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"bottom"}[0], scalar @{$addresses{$mem_type}{"bottom"}})};
+                
+				next if $good_data[0] eq "ERROR";            
+                
+                # Pick out the proper byte if there are multiple bytes reported for each address.
+				foreach my $i (0 .. $#data) {
                     my $offset = ($i % $bytes_per_read) * 2;
                     $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
                     $data[$i] = substr($data[$i], $offset, 2);
@@ -964,8 +988,8 @@ sub RunMISP {
     if (not exists $commands{$command}) {
         if (not exists $missing_commands{$command}) {
             $missing_commands{$command} = 1;
-            # print $to_log "WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n";
-            $log_text->Append("WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n");
+            print $to_log "WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n";
+            # $log_text->Append("WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n");
         }
         return "NO_COMMAND";
     } else {
@@ -1083,7 +1107,7 @@ sub RunMISP {
     
         # Read the desired address from the data structure
         if ($open_files{$file}{"type"} eq "hex" || $open_files{$file}{"type"} eq "srec") {
-            $open_files{$file}{"data"}->get($addr, $num_bytes);            
+            $data_ref = $open_files{$file}{"data"}->get($addr, $num_bytes);            
         } elsif ($open_files{$file}{"type"} eq "bin") {
             my @temp_array = $open_files{$file}{"data"}{($addr .. $addr + $num_bytes - 1)};
             $data_ref = \@temp_array;
@@ -1136,7 +1160,7 @@ sub RunMISP {
                                                                       $open_files{$file}{"data"}->as_srec_hex(0x10);
             
             # Write the string to a file.
-            my $path = $QA_dir . $modified_data_file . "." . $open_files{$file}{"type"};
+            my $path = $modified_data_file . "." . $open_files{$file}{"type"};
             open my $out, '>', $path or die "Couldn't open output data file.";
             print $out $data_string;
             close $out;
@@ -1260,7 +1284,7 @@ sub BlankData {
 sub MemoryTypes {
     my ($twig, $elt ) = @_;
     $memory_types{$elt->att("Type")} = {};
-    # The anonymous hash will be filled with bank addresses and sizes by the SetBanks function
+    # The anonymous hash will be filled with bank addresses and sizes by the AddBanks function
 }
 
 # Handler that will set up %memory_types with all existing memory banks.
@@ -1270,7 +1294,7 @@ sub AddBanks {
     my ($twig, $elt) = @_;
     my $addr = hex $elt->first_child("Addr")->text();
     my $size = hex $elt->first_child("Size")->text();
-    $memory_types{$elt->parent()->parent()->att("Type")}{$addr} = hex $size;
+    $memory_types{$elt->parent()->parent()->att("Type")}{$addr} = $size;
 }
 
 # Handler that will set up %data_files with all existing data files.
@@ -1281,7 +1305,9 @@ sub AddDataFiles {
     
     # Only grab common data files.
     if ($elt->parent()->gi() eq "CommonData") {
-        $data_files{$elt->att("Memory_Type")} = $elt->first_child("RecentFilePath")->text();
+		my $file = $elt->first_child("RecentFilePath")->text();
+		$file = "C:\\CheckSum\\MISP\\Fixture USBDrive\\" . substr($file, 2) if substr($file, 0, 1) eq ".";
+        $data_files{$elt->att("Memory_Type")} = $file;
     }
     
     ### TO DO: Maybe add support for multiple common data files and device specific files. ###
