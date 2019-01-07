@@ -240,7 +240,7 @@ sub Main_Terminate {
 
 sub Log_Terminate {
     $log_window->Hide();
-    return 1;
+    return 0;
 }
 
 sub BrowseButton_Click {
