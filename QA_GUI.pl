@@ -12,6 +12,11 @@ use Cwd qw( getcwd abs_path);
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 
+# TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
+#		 Could also set up a cancel button in the log window.
+#		 Win32::Process may be good for this, too.
+#		 Actually, open() will allow it to run in the background. That might be good enough.
+
 # Hide the DOS window that shows up when you start by double clicking.
 # my $DOS = Win32::GUI::GetPerlWindow();
 # Win32::GUI::Hide($DOS);
@@ -35,6 +40,7 @@ my %blank_data = ();
 my %data_files = ();  # $data_files{$mem_type}
 my $auto_detect = 0;
 my $bytes_per_read = 1;
+my $cancel_clicked = 0;
     
 # Create a "file handle" to the log string. This will allow me to print to the string.
 # I'll open this in the Run Button event section.
@@ -194,6 +200,9 @@ my $log_text = $log_window->AddTextfield(-name => 'LogText',
                                          -text => "",
                                          -multiline => 1,
                                          -vscroll => 1);
+										 
+ my $cancel_button = $log_window->AddButton(-name => 'Cancel',
+											-text => 'Cancel');
 
 # my $log_file_field = $main->AddTextfield(-left => 20,
                                          # -prompt => ['Output to file:', 60],
@@ -349,7 +358,7 @@ sub Run_Click {
     my $reverse_endian = $endian->Checked();
     $bytes_per_read = $read_bytes->Text(); 
     my $full_sequence = $full_text->Text();
-	# %commands = ();
+	$cancel_clicked = 0;
     
     # Clear the log window for a new run. Maybe...
     $log_text->Change(-text => '');
@@ -361,10 +370,10 @@ sub Run_Click {
     if (not $log_window->IsVisible()) {
         $log_window->Resize($w, $h);
         $log_window->Move($main->Left() + 20, $main->Top() + 20);
-        $log_text->Change(-height => $log_window->ScaleHeight() - 10,
-                          -width => $log_window->ScaleWidth() - 10,
-                          -top => 5,
-                          -left => 5);
+        # $log_text->Change(-height => $log_window->ScaleHeight() - 10 - $cancel_button->Height() - 100,
+                          # -width => $log_window->ScaleWidth() - 10,
+                          # -top => 5,
+                          # -left => 5);
         $log_window->Show();
     }
     
@@ -555,7 +564,7 @@ sub Run_Click {
 
         # Now run the test
         @test_result = RunMISP("-k", $xml_out);
-        $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
+        $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Device ID test passed with altered ID. See log for details.\r\n";
             # $log_text->Append("ERROR: Device ID test passed with altered ID. See log for details.\r\n\r\n");
@@ -601,7 +610,7 @@ sub Run_Click {
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
-        $log_text->Append("\tVerify while blank: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
+        $log_text->Append("\tVerify while blank: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Verify succeeded after erase. See log for details.\r\n";
             # $log_text->Append("ERROR: Verify succeeded after erase. See log for details.\r\n\r\n");
@@ -690,7 +699,7 @@ sub Run_Click {
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
-        $log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
+        $log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n";
             # $log_text->Append("ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n\r\n");
@@ -746,7 +755,7 @@ sub Run_Click {
                     
                     # Verify with the modified file, expecting a failure.
                     @test_result = RunMISP("-v", $xml_verify);
-                    $log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "PASSED" ? "FAILED" : "PASSED") . "\r\n");
+                    $log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
                     if ($test_result[0] eq "PASSED") {
                         print $to_log "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
                         # $log_text->Append("ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n\r\n");
@@ -792,9 +801,9 @@ sub Run_Click {
                 
                 next if $good_data[0] eq "ERROR";            
 
-                # Pick out the proper byte if there are multiple bytes reported for each address.
+                # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
 				foreach my $i (0 .. $#data) {
-					START HERE. Need to pad with leading zeros if the data isn't the maximum number of digits.
+					$data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
                     my $offset = ($i % $bytes_per_read) * 2;
                     $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
                     $data[$i] = substr($data[$i], $offset, 2);
@@ -827,8 +836,9 @@ sub Run_Click {
                 
 				next if $good_data[0] eq "ERROR";            
                 
-                # Pick out the proper byte if there are multiple bytes reported for each address.
+                # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
 				foreach my $i (0 .. $#data) {
+					$data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
                     my $offset = ($i % $bytes_per_read) * 2;
                     $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
                     $data[$i] = substr($data[$i], $offset, 2);
@@ -947,8 +957,11 @@ sub Main_Resize {
 }
 
 sub Log_Resize {
-    $log_text->Change(-height => $log_window->ScaleHeight() - 10,
+    $log_text->Change(-height => $log_window->ScaleHeight() - 10 - $cancel_button->Height() - 10, #-height => $log_window->ScaleHeight() - 10,
                       -width => $log_window->ScaleWidth() - 10);
+					  
+	$cancel_button->Change(-top => $log_text->Top() + $log_text->Height() + 10,
+						   -left => 20);
     return 1;
 }
 
@@ -961,6 +974,13 @@ sub Main_DropFiles {
     
     $xml_browser->Change(-text => $file, -foreground => [0, 0, 0]);
     return 1;
+}
+
+sub Cancel_Click {
+	$log_text->Append("\r\nOPERATION CANCELLED.\r\n");
+	$cancel_clicked = 1;
+	
+	return 1;
 }
 
 #####################
@@ -992,7 +1012,7 @@ sub RunMISP {
             # $log_text->Append("WARNING: No $command command in MISP setup. Related tests skipped. \r\n\r\n");
         }
         return "NO_COMMAND";
-    } else {
+	} else {
         # Perform MISP step
 		# print $to_log "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
         $misp_output = `\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options`;
