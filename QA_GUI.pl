@@ -5,7 +5,7 @@ use 5.010;
 use XML::Twig;
 use File::Basename;
 use File::Path qw( make_path );
-use List::Util qw ( min );
+use List::Util qw ( min first );
 use List::MoreUtils qw( minmax );
 use Hex::Record;
 use Cwd qw( getcwd abs_path);
@@ -39,8 +39,9 @@ my $log = "";  # This string will contain all log data to be displayed in the GU
 my %blank_data = ();
 my %data_files = ();  # $data_files{$mem_type}
 my $auto_detect = 0;
-my $bytes_per_read = 1;
+my $bytes_per_read = 4;
 my $cancel_clicked = 0;
+my @missing_addr = ();
     
 # Create a "file handle" to the log string. This will allow me to print to the string.
 # I'll open this in the Run Button event section.
@@ -117,7 +118,7 @@ my $read_bytes = $main->AddTextfield(-name => 'Bytes',
                                      -top => $read_label->Top() + $read_label->Height() + $body_above,
                                      -left => $body_margin,
                                      -prompt => [ 'Bytes per read: ', 80 ],
-                                     -text => '1',
+                                     -text => '4',
                                      -align => 'center');
                             
 my $read_updown = $main->AddUpDown(-autobuddy => 0,
@@ -129,7 +130,8 @@ $read_updown->Range(1, 32);
 my $endian = $main ->AddCheckbox(-text => 'Reverse endianness',
                                  -top => $read_bytes->Top(),
                                  -left => $read_updown->Left() + $read_updown->Width() + 25,
-                                 -disabled => 1);
+                                 # -disabled => 1,
+								 -checked => 1);
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
 							-top => $read_bytes->Top() + $read_bytes->Height() + $header_above,
@@ -144,7 +146,8 @@ my $auto_check = $main->AddCheckbox(-name => 'AutoCheck',
                                      
 my $program_check = $main->AddCheckbox(-text => '-p',
                                        -top => $auto_check->Top() + $auto_check->Height() + $body_above,
-                                       -left => $auto_check->Left());
+                                       -left => $auto_check->Left(),
+									   -checked => 1);
                                     
 my $verify_check = $main->AddCheckbox(-text => '-v',
                                       -top => $program_check->Top(),
@@ -172,7 +175,8 @@ my $chiperase_check = $main->AddCheckbox(-text => '--chiperase',
                                          
 my $read_check = $main->AddCheckbox(-text => '--read',
                                     -top => $pvp_check->Top(),
-                                    -left => $blank_check->Left());
+                                    -left => $blank_check->Left(),
+									-checked => 1);
                                     
 my $config_check = $main->AddCheckbox(-text => '-w',
                                       -top => $pvp_check->Top() + $pvp_check->Height() + $body_above,
@@ -359,6 +363,7 @@ sub Run_Click {
     $bytes_per_read = $read_bytes->Text(); 
     my $full_sequence = $full_text->Text();
 	$cancel_clicked = 0;
+	@missing_addr = ();
     
     # Clear the log window for a new run. Maybe...
     $log_text->Change(-text => '');
@@ -547,6 +552,7 @@ sub Run_Click {
         $log_text->Append("Running ID tests...\r\n");
 
         @test_result = RunMISP("-k", $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tTest with proper ID: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Device ID test failed with given ID. See log for details.\r\n";
@@ -564,6 +570,7 @@ sub Run_Click {
 
         # Now run the test
         @test_result = RunMISP("-k", $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Device ID test passed with altered ID. See log for details.\r\n";
@@ -590,6 +597,7 @@ sub Run_Click {
         
         my $erase_command = (exists $commands{"--chiperase"} ? "--chiperase" : "-e");
         @test_result = RunMISP($erase_command, $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tErase operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Chip erase failed. See log for details.\r\n";
@@ -599,6 +607,7 @@ sub Run_Click {
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
+		return 1 if $cancel_clicked;
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tBlank check while blank: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
@@ -609,8 +618,12 @@ sub Run_Click {
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
-		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
-        $log_text->Append("\tVerify while blank: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+		return 1 if $cancel_clicked;
+		if ($test_result[0] eq "NO_COMMAND") {
+			$log_text->Append("\tVerify while blank: SKIPPED\r\n");
+		} else {
+			$log_text->Append("\tVerify while blank: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+		}
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Verify succeeded after erase. See log for details.\r\n";
             # $log_text->Append("ERROR: Verify succeeded after erase. See log for details.\r\n\r\n");
@@ -625,13 +638,14 @@ sub Run_Click {
                 # Make a string containing the range of addresses to read and the memory type to read from
                 my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"top"}[0], $addresses{$mem_type}{"top"}[-1], $mem_type); 
                 RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
+				return 1 if $cancel_clicked;
                 
                 # Throw the data returned from all addresses into an array.
                 my @data = $misp_output =~ m/Device Memory.*=\s(.*)/g;
 
                 # Check to make sure the array only contains correct data.
                 foreach my $i (0 .. $#data) {
-                    $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if $data[$i] != $blank_data{$mem_type};
+                    $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if hex $data[$i] != hex $blank_data{$mem_type};
                 }
                 
                 # Skip bottom read if it was covered by the top read.
@@ -639,25 +653,23 @@ sub Run_Click {
                 
                 # Set up the address range for the bottom of the memory.
                 $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"bottom"}[0], $addresses{$mem_type}{"bottom"}[-1], $mem_type);
-                RunMISP("--read", $xml_out, $range);  # Read the bottom of the bank.    
+                RunMISP("--read", $xml_out, $range);  # Read the bottom of the bank.  
+				return 1 if $cancel_clicked;  
 
                 # Throw the data returned from all addresses into an array.
                 @data = $misp_output =~ m/Device Memory.*=\s(.*)/g;
 
                 # Check to make sure the array only contains blank data.
                 foreach my $i (0 .. $#data) {
-                    $read_errors{$addresses{$mem_type}{"bottom"}[$i]} = $data[$i] if hex $data[$i] == hex $blank_data{$mem_type};
+                    $read_errors{$addresses{$mem_type}{"bottom"}[$i]} = $data[$i] if hex $data[$i] != hex $blank_data{$mem_type};
                 }
                 
                 # Display read errors if any occurred.
                 if (scalar (keys %read_errors)) {
                     $log_text->Append("\tRead blank data: FAILED\r\n");
                     print $to_log "ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
-                    "    Data read was $read_errors{$_}.\n" foreach (keys %read_errors);
-                    # $log_text->Append("ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
-                    # "    Data read was $read_errors{$_}.\n") foreach (keys %read_errors);
-                    # print $to_log "\r\n";
-                    # $log_text->Append("\r\n\r\n");
+                    "    Data read was $read_errors{$_}.\r\n" foreach (sort keys %read_errors);
+					$error_count += scalar keys %read_errors;
                 } else {
                     $log_text->Append("\tRead blank data: PASSED\r\n");
                 }
@@ -680,6 +692,7 @@ sub Run_Click {
         $log_text->Append("\r\nRunning programming tests...\r\n");
         
         @test_result = RunMISP("-p", $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tProgram operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Programming failed. See log for details.\r\n";
@@ -689,6 +702,7 @@ sub Run_Click {
         
         # Program it again to make sure you can program a pre-programmed chip
         @test_result = RunMISP("-p", $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_log "ERROR: Programming failed when the chip is already programmed. See log for details.\r\n";
@@ -698,8 +712,12 @@ sub Run_Click {
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
-		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
-        $log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+		return 1 if $cancel_clicked;
+		if ($test_result[0] eq "NO_COMMAND") {
+			$log_text->Append("\tBlank check while programmed: SKIPPED\r\n");
+		} else {
+			$log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+		}
         if ($test_result[0] eq "PASSED") {
             print $to_log "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n";
             # $log_text->Append("ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n\r\n");
@@ -708,6 +726,7 @@ sub Run_Click {
         
         # Do a verify
         @test_result = RunMISP("-v", $xml_out);
+		return 1 if $cancel_clicked;
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tVerify while programmed: $test_result[0]\r\n");
 		
@@ -745,22 +764,25 @@ sub Run_Click {
                     # Read the current byte.
                     my $temp_data = ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], 1);
                     
-                    # Increment said byte and store it as a string again.
-                    $$temp_data[0] = hex $$temp_data[0] == 255 ? 0 : (hex $$temp_data[0]) + 1;
-                    $$temp_data[0] = sprintf("%x", $$temp_data[0]);
+                    # Increment said byte and store it as a string again. Skip if it wasn't found in the data file.
+					if ((defined $$temp_data[0]) && ($$temp_data[0] ne "not found")) {
+						$$temp_data[0] = hex $$temp_data[0] == 255 ? 0 : (hex $$temp_data[0]) + 1;
+						$$temp_data[0] = sprintf("%x", $$temp_data[0]);
                     
-                    # Write modified byte to new file. The data structure in memory will be restored to the previous
-                    #   state after writing out the modified file.
-                    WriteDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], $temp_data);
-                    
-                    # Verify with the modified file, expecting a failure.
-                    @test_result = RunMISP("-v", $xml_verify);
-                    $log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
-                    if ($test_result[0] eq "PASSED") {
-                        print $to_log "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
-                        # $log_text->Append("ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n\r\n");
-                        $error_count++;
-                    }
+						# Write modified byte to new file. The data structure in memory will be restored to the previous
+						#   state after writing out the modified file.
+						WriteDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], $temp_data);
+						
+						# Verify with the modified file, expecting a failure.
+						@test_result = RunMISP("-v", $xml_verify);
+						return 1 if $cancel_clicked;
+						$log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+						if ($test_result[0] eq "PASSED") {
+							print $to_log "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
+							# $log_text->Append("ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n\r\n");
+							$error_count++;
+						}
+					}
                 }
                 
                 # Restore the XML file to the original data file.
@@ -771,6 +793,7 @@ sub Run_Click {
         # Write config words if a -w command exists in the XML
         if (exists $commands{"-w"}) {
             @test_result = RunMISP("-w", $xml_out);
+			return 1 if $cancel_clicked;
             $log_text->Append("\tWrite config words: $test_result[0]\r\n");
             if ($test_result[0] eq "FAILED") {
                 print $to_log "ERROR: Config word write failed. See log for details.\r\n";
@@ -790,11 +813,12 @@ sub Run_Click {
                 # Make a string containing the range of addresses to read and the memory type to read from
                 my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"top"}[0], $addresses{$mem_type}{"top"}[-1], $mem_type); 
 				RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
+				return 1 if $cancel_clicked;
                 
 				# Throw the data returned from all addresses into an array.
                 my @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g; # m/Device Memory.*=\s(.*)/g;
 				
-				print "$_\r\n" foreach (@data);
+				# print "$_\r\n" foreach (@data);
 				
                 # Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
                 my @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"top"}[0], scalar @{$addresses{$mem_type}{"top"}})};
@@ -809,14 +833,12 @@ sub Run_Click {
                     $data[$i] = substr($data[$i], $offset, 2);
                 }
 				
-				print "$data[$_] $good_data[$_]\r\n" foreach (0 .. $#data);
+				# printf("%d %d\r\n", hex $data[$_], hex $good_data[$_]) foreach (0 .. $#data);
                 
                 # Check to make sure the array only contains correct data.
                 foreach my $i (0 .. $#data) {
                     # Skip the good data comparison if the address was not found in the data file
-                    if (not defined $good_data[$i]) {
-                        $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i];
-                    } else {                
+                    if ((defined $good_data[$i]) && ($good_data[$i] ne "not found")) {
                         $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if hex $data[$i] != hex $good_data[$i];
                     }
                 }
@@ -827,6 +849,7 @@ sub Run_Click {
                 # Set up the address range for the bottom of the memory.
                 $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"bottom"}[0], $addresses{$mem_type}{"bottom"}[-1], $mem_type);
                 RunMISP("--read", $xml_out, $range);  # Read the bottom of the bank.    
+				return 1 if $cancel_clicked;
 
                 # Throw the data returned from all addresses into an array.
                 @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g;
@@ -834,7 +857,7 @@ sub Run_Click {
 				# Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
                 @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"bottom"}[0], scalar @{$addresses{$mem_type}{"bottom"}})};
                 
-				next if $good_data[0] eq "ERROR";            
+				next if $good_data[0] eq "ERROR";       			
                 
                 # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
 				foreach my $i (0 .. $#data) {
@@ -844,13 +867,15 @@ sub Run_Click {
                     $data[$i] = substr($data[$i], $offset, 2);
                 }
 
+				# printf("Compare: %d %d\r\n", hex $data[$_], hex $good_data[$_]) foreach (0 .. $#data);
+				# print "$good_data[$_]\r\n" foreach (0 .. $#good_data);
+
                 # Check to make sure the array only contains correct data.
                 foreach my $i (0 .. $#data) {
                     # Skip the good data comparison if the address was not found in the data file
-                    if (not defined $good_data[$i]) {
-                        $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i];
-                    } else {                
-                        $read_errors{$addresses{$mem_type}{"top"}[$i]} = $data[$i] if hex $data[$i] == hex $good_data[$i];
+                    if ((defined $good_data[$i]) && ($good_data[$i] ne "not found")) {
+                        $read_errors{$addresses{$mem_type}{"bottom"}[$i]} = $data[$i] if hex $data[$i] != hex $good_data[$i];
+						# printf("No match: %d, %d\r\n", hex $data[$i], hex $good_data[$i]);
                     }
                 }
                 
@@ -859,10 +884,7 @@ sub Run_Click {
                     $log_text->Append("\tRead programmed data: FAILED\r\n");
                     print $to_log "ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                         "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
-                    # $log_text->Append("ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
-                        # "    Data read was $read_errors{$_}.\r\n") foreach (keys %read_errors);
-                    # print $to_log "\r\n";
-                    # $log_text->Append("\r\n");
+					$error_count += scalar keys %read_errors;
                 } else {
                     $log_text->Append("\tRead programmed data: PASSED\r\n");
                 }
@@ -887,6 +909,7 @@ sub Run_Click {
         $log_text->Append("\r\nRunning full sequence...\r\n");
     
         @test_result = RunMISP($full_sequence, $xml_out);
+		return 1 if $cancel_clicked;
         $log_text->Append("\tFull sequence: $test_result[0]");
         if ($test_result[0] eq "FAILED") {
             $log_text->Append("\r\n");
@@ -1015,7 +1038,22 @@ sub RunMISP {
 	} else {
         # Perform MISP step
 		# print $to_log "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
-        $misp_output = `\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options`;
+		my $call_string = "\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options";
+		my $misp_pid = open my $misp_pipe, '-|', $call_string or die "ERROR: Couldn't open pipe to csMISPV3.exe: $!";
+		
+		# Store the STDOUT from csMISPV3.exe in $misp_output. Break out and kill the process if Cancel button is clicked.
+		while(<$misp_pipe>) {
+			$misp_output .= $_;
+			Win32::GUI::DoEvents();
+			if ($cancel_clicked) {
+				kill(9, $misp_pid);
+				close($misp_pipe);
+				return "CANCEL";
+			}
+		}
+		
+		close $misp_pipe;
+		
 		# print $to_log "MISP output: \r\n $misp_output\r\n\r\n";
         
         # Snag the pass/fail result and total test time.
@@ -1137,13 +1175,17 @@ sub RunMISP {
         #   missing from the data file.
         foreach my $i (0 .. $#$data_ref) {
             # print $to_log "WARNING: Some addresses in the $num_bytes bytes starting at $addr not found in data file: \"$file\".\n" if not defined $_;
+			# The second part of this if checks if the address is already in the array.
             if (not defined $$data_ref[$i]) {
-                # print $to_log "WARNING: Address " . sprintf("%#x", $addr + $i) . " not found in data file: \"$file\".\r\n\r\n";
-                $log_text->Append("WARNING: Address " . sprintf("%#x", $addr + $i) . " not found in data file: \"$file\".\r\n\r\n");
+				push @missing_addr, $addr + $i if (not first {$_ eq $addr + $i} @missing_addr);
                 $$data_ref[$i] = "not found";
             }
-            
         }
+		# print scalar @missing_addr . " missing addresses\n";
+		# if (scalar @missing_addr) {
+			# print $to_log "WARNING: " . scalar @missing_addr . " addresses not found in data file.\r\n";
+			# print $to_log sprintf("%X\r\n", $_) foreach (@missing_addr);
+		# }
         
         return $data_ref;
     }
