@@ -1,6 +1,8 @@
 use strict;
 use warnings;
 
+# use lib "\\\\csdc\\Shared\\Share\\AnthonyF\\lib\\perl5\\MSWin32-x64-multi-thread";
+
 use 5.010;
 use XML::Twig;
 use File::Basename;
@@ -20,6 +22,10 @@ use Win32::GUI::DropFiles;
 # Hide the DOS window that shows up when you start by double clicking.
 # my $DOS = Win32::GUI::GetPerlWindow();
 # Win32::GUI::Hide($DOS);
+
+# TO DO: For tests that pass with a FAILED result, make sure that the test was actually run.
+#		 Don't allow a FAILED result due to something like failure to read the data file get through as 
+#		 a pass.
 
 #####################
 
@@ -95,7 +101,7 @@ my $input_label = $main->AddLabel(-text => 'Input File',
 
 my $default_browse_text = "Drop or Select MISP XML file";
 my $xml_browser = $main->AddTextfield(-name => 'BrowseField',
-									  -text => 'C:\CheckSum\misp1.txt',##$default_browse_text,
+									  -text => 'C:\CheckSum\misp1.txt', ##$default_browse_text,##
 									  -height => 20,
 									  -width => 250,
 									  -left => $body_margin,
@@ -118,7 +124,7 @@ my $read_bytes = $main->AddTextfield(-name => 'Bytes',
                                      -top => $read_label->Top() + $read_label->Height() + $body_above,
                                      -left => $body_margin,
                                      -prompt => [ 'Bytes per read: ', 80 ],
-                                     -text => '4',
+                                     -text => '1',
                                      -align => 'center');
                             
 my $read_updown = $main->AddUpDown(-autobuddy => 0,
@@ -130,8 +136,9 @@ $read_updown->Range(1, 32);
 my $endian = $main ->AddCheckbox(-text => 'Reverse endianness',
                                  -top => $read_bytes->Top(),
                                  -left => $read_updown->Left() + $read_updown->Width() + 25,
-                                 # -disabled => 1,
-								 -checked => 1);
+                                 -disabled => 1
+								 #-checked => 1
+								 );
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
 							-top => $read_bytes->Top() + $read_bytes->Height() + $header_above,
@@ -147,7 +154,8 @@ my $auto_check = $main->AddCheckbox(-name => 'AutoCheck',
 my $program_check = $main->AddCheckbox(-text => '-p',
                                        -top => $auto_check->Top() + $auto_check->Height() + $body_above,
                                        -left => $auto_check->Left(),
-									   -checked => 1);
+									   #-checked => 1
+									   );
                                     
 my $verify_check = $main->AddCheckbox(-text => '-v',
                                       -top => $program_check->Top(),
@@ -176,7 +184,8 @@ my $chiperase_check = $main->AddCheckbox(-text => '--chiperase',
 my $read_check = $main->AddCheckbox(-text => '--read',
                                     -top => $pvp_check->Top(),
                                     -left => $blank_check->Left(),
-									-checked => 1);
+									#-checked => 1
+									);
                                     
 my $config_check = $main->AddCheckbox(-text => '-w',
                                       -top => $pvp_check->Top() + $pvp_check->Height() + $body_above,
@@ -465,12 +474,14 @@ sub Run_Click {
 
     #-------------------#
 
-    # If there is a read command, set up read addresses for top and bottom of part.
-    if (not exists $commands{"--read"}) {
+    # If there is a read or verify command, set up addresses for top and bottom of part.
+    if ((not exists $commands{"--read"}) && (not exists $commands{"-v"})) {
         if (not exists $missing_commands{"--read"}) {
             $missing_commands{"--read"} = 1;
+			$missing_commands{"-v"} = 1;
             # print $to_log "WARNING: No --read command in MISP setup. Related tests skipped. \r\n\r\n";
             $log_text->Append("WARNING: No --read command in MISP setup. Related tests skipped. \r\n");
+            $log_text->Append("WARNING: No -v command in MISP setup. Related tests skipped. \r\n");
         }
     } else {
         foreach my $mem_type (keys %memory_types) {
@@ -500,8 +511,16 @@ sub Run_Click {
             
             # Set up hash containing addresses to read at the bottom of the memory type.
             $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
+		
+			#debug 
+			foreach my $foo (keys %{$addresses{$mem_type}}) {
+				print "$mem_type $foo: ";
+				print "$_, " foreach (@{$addresses{$mem_type}{$foo}});
+				print "\n";
+			}
         }
     }
+	
 
     # If there is a verify command, set up a middle address to modify.
     if (not exists $commands{"-v"}) {
@@ -678,7 +697,7 @@ sub Run_Click {
                     "    Data read was $read_errors{$_}.\r\n" foreach (sort keys %read_errors);
 					$error_count += scalar keys %read_errors;
                 } else {
-                    $log_text->Append("\tRead blank data: PASSED\r\n");
+                    $log_text->Append("\tRead blank data ($mem_type): PASSED\r\n");
                 }
             }
         }
@@ -751,14 +770,20 @@ sub Run_Click {
         if (not exists $missing_commands{"-v"}) {
         
             foreach my $mem_type (keys %memory_types) {
+				print "debug 6 $mem_type, $data_files{$mem_type}\n";
                 # Skip this memory type if there is no associated data file.
                 next if not exists $data_files{$mem_type}; # eq "";
                     
                 # Find the current data file field in the XML.
                 my $elt = $root->next_elt("DataFile");
+				# my $debug_cnt = 0;
                 while ($elt->att("Memory_Type") ne $mem_type && defined $elt) {
-                    $elt->next_elt("DataFile");
+					print "debug 8, " . $elt->att("Memory_Type") . "\n";
+                    $elt = $elt->next_elt("DataFile");
+					# $debug_cnt++;
                 }
+				
+				print "debug 7\n";
                 
                 # Skip this memory type if an associated data file is not found. This shouldn't
                 #   ever happen because the previous "next" should catch it. But just in case.
@@ -772,20 +797,29 @@ sub Run_Click {
                 
                 # Modify a byte at each of the top, middle, and bottom.
                 foreach (keys %{$addresses{$mem_type}}) {
+					print "debug 5, $mem_type, $_, " . scalar(keys(%{$addresses{$mem_type}})) . " address entries: ";
+					print "$_, " foreach (keys(%{$addresses{$mem_type}}));
+					print "\n";
+					print "$_, " foreach (@{$addresses{$mem_type}{$_}});
+					# print "size is " . scalar @{$addresses{$mem_type}{$_}} . "\n";
+					print "\n";
+					
                     # Read the current byte.
                     my $temp_data = ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], 1);
                     
                     # Increment said byte and store it as a string again. Skip if it wasn't found in the data file.
 					if ((defined $$temp_data[0]) && ($$temp_data[0] ne "not found")) {
 						$$temp_data[0] = hex $$temp_data[0] == 255 ? 0 : (hex $$temp_data[0]) + 1;
-						$$temp_data[0] = sprintf("%x", $$temp_data[0]);
+						$$temp_data[0] = sprintf("%02x", $$temp_data[0]);
                     
 						# Write modified byte to new file. The data structure in memory will be restored to the previous
 						#   state after writing out the modified file.
 						WriteDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], $temp_data);
 						
+						print "debug 1\n";
 						# Verify with the modified file, expecting a failure.
 						@test_result = RunMISP("-v", $xml_verify);
+						print "debug 2\n";
 						Cleanup() if $cancel_clicked;
 						return 1 if $cancel_clicked;
 						$log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
@@ -796,9 +830,12 @@ sub Run_Click {
 						}
 					}
                 }
+				
+				print "debug 3\n";
                 
                 # Restore the XML file to the original data file.
                 $elt->first_child("RecentFilePath")->set_text($data_files{$mem_type});
+				print "debug 4\n";
             }
         }
         
@@ -837,7 +874,7 @@ sub Run_Click {
                 # Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
                 my @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"top"}[0], scalar @{$addresses{$mem_type}{"top"}})};
                 
-                next if $good_data[0] eq "ERROR";            
+                next if $good_data[0] eq "ERROR";
 
                 # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
 				foreach my $i (0 .. $#data) {
@@ -901,7 +938,7 @@ sub Run_Click {
                         "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
 					$error_count += scalar keys %read_errors;
                 } else {
-                    $log_text->Append("\tRead programmed data: PASSED\r\n");
+                    $log_text->Append("\tRead programmed data ($mem_type): PASSED\r\n");
                 }
             }
         }
@@ -978,6 +1015,7 @@ sub Cleanup {
     %data_files = ();
     %commands = ();
     close $to_log;
+	CloseAllDataFiles();
 }
 
 sub Main_Resize {
@@ -1063,9 +1101,13 @@ sub RunMISP {
         # Perform MISP step
 		# print $to_log "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
 		my $call_string = "\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options";
+		
+		print $call_string . "\n" ;
+		
 		my $misp_pid = open my $misp_pipe, '-|', $call_string or die "ERROR: Couldn't open pipe to csMISPV3.exe: $!";
 		
 		# Store the STDOUT from csMISPV3.exe in $misp_output. Break out and kill the process if Cancel button is clicked.
+		my $foo_count = 0;
 		while(<$misp_pipe>) {
 			$misp_output .= $_;
 			Win32::GUI::DoEvents();
@@ -1074,7 +1116,13 @@ sub RunMISP {
 				close($misp_pipe);
 				return "CANCEL";
 			}
+			print "In the cancel loop, $foo_count. $_";
+			# last if $_ =~ m/ISP Tests: [PASSED|FAILED]/;
+			# sleep(1);
+			$foo_count++;
 		}
+		
+		print "Out of the loop\n";
 		
 		close $misp_pipe;
 		
@@ -1120,6 +1168,7 @@ sub RunMISP {
         
         # Determine the type of the new file.
         my $extension = lc +(fileparse($file, @supported_types))[2];
+		$open_files{$file}{"ext"} = substr $extension, 1;
         if ($extension eq ".hex") {
             $open_files{$file}{"type"} = "hex";
         } elsif ($extension eq ".s19" || $extension eq ".s28" || $extension eq ".s37" ||
@@ -1167,6 +1216,13 @@ sub RunMISP {
         }
         return 0;
     }
+	
+	# "Close" all opened data files. Essentially just purge the %open_files hash and start it anew.
+	#     I don't know if this is the right way to do this. I'm a bit worried about memory leaks.
+	sub CloseAllDataFiles {
+		undef %open_files;
+		%open_files = ();	
+	}
     
     # Read from a data file. Currently supports Intel hex, srec, and binary formats
     # Arg1: $file - Input file name
@@ -1246,7 +1302,7 @@ sub RunMISP {
                                                                       $open_files{$file}{"data"}->as_srec_hex(0x10);
             
             # Write the string to a file.
-            my $path = $modified_data_file . "." . $open_files{$file}{"type"};
+            my $path = $modified_data_file . "." . $open_files{$file}{"ext"};
             open my $out, '>', $path or die "Couldn't open output data file.";
             print $out $data_string;
             close $out;
@@ -1381,7 +1437,7 @@ sub AddDataFiles {
     my ($twig, $elt) = @_;
     
     # Only grab common data files.
-    if ($elt->parent()->gi() eq "CommonData") {
+    if (($elt->parent()->gi() eq "CommonData") && ($elt->first_child("Enable")->text() eq "Yes")) {
 		my $file = $elt->first_child("RecentFilePath")->text();
 		$file = "C:\\CheckSum\\MISP\\Fixture USBDrive\\" . substr($file, 2) if substr($file, 0, 1) eq ".";
         $data_files{$elt->att("Memory_Type")} = $file;
