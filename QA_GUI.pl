@@ -14,6 +14,8 @@ use Cwd qw( getcwd abs_path);
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 
+# NOTE: I had to modify Hex::Record.pm. It wasn't counting the end-of-line checksum in the byte count that comes after the record type.
+
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
 #		 Win32::Process may be good for this, too.
