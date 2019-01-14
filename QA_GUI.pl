@@ -14,7 +14,7 @@ use Cwd qw( getcwd abs_path);
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 
-# NOTE: I had to modify Hex::Record.pm. It wasn't counting the end-of-line checksum in the byte count that comes after the record type.
+# NOTE: I had to modify Hex::Record.pm lin 388. It wasn't counting the end-of-line CRC in the byte count that comes after the record type.
 
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
@@ -35,7 +35,7 @@ use Win32::GUI::DropFiles;
 
 #####################
 
-my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord" );
+my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord", ".mot" );
 my %commands = ();
 my %missing_commands = ();
 my $misp_output = "";
@@ -115,7 +115,7 @@ my $browse_button = $main->AddButton(-name => 'BrowseButton',
                               -top => $xml_browser->Top(),
 							  -left => $xml_browser->Left() + $xml_browser->Width() + 5);
                             
-my $read_label = $main->AddLabel(-text => 'Read Configuration',
+my $config_label = $main->AddLabel(-text => 'Configuration',
 							-top => $xml_browser->Top() + $xml_browser->Height() + $header_above,
                             -left => $header_margin,
                             -font => $heading);
@@ -123,7 +123,7 @@ my $read_label = $main->AddLabel(-text => 'Read Configuration',
 my $read_bytes = $main->AddTextfield(-name => 'Bytes',
                                      -height => 20,
                                      -width => 40,
-                                     -top => $read_label->Top() + $read_label->Height() + $body_above,
+                                     -top => $config_label->Top() + $config_label->Height() + $body_above,
                                      -left => $body_margin,
                                      -prompt => [ 'Bytes per read: ', 80 ],
                                      -text => '1',
@@ -142,8 +142,23 @@ my $endian = $main ->AddCheckbox(-text => 'Reverse endianness',
 								 #-checked => 1
 								 );
 
+my $full_runs = $main->AddTextfield(-name => 'FullRuns',
+                                     -height => 20,
+                                     -width => 55,
+                                     -top => $read_bytes->Top() + $read_bytes->Height() + $body_above,
+                                     -left => $body_margin,
+                                     -prompt => [ 'Full sequence runs: ', 100 ],
+                                     -text => '1',
+                                     -align => 'center');
+                            
+my $full_updown = $main->AddUpDown(-autobuddy => 0,
+                                   -setbuddy => 1,
+                                   -arrowkeys => 0);
+$full_updown->SetBuddy($full_runs);
+$full_updown->Range(1, 2000);
+
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
-							-top => $read_bytes->Top() + $read_bytes->Height() + $header_above,
+							-top => $full_runs->Top() + $full_runs->Height() + $header_above,
                             -left => $header_margin,
                             -font => $heading);
 
@@ -451,7 +466,8 @@ sub Run_Click {
                                                  verbosity => \&SetVerbosity,
                                                  blankdata => \&BlankData,
                                                  Bank => \&AddBanks,
-                                                 DataFile => \&AddDataFiles} );
+                                                 DataFile => \&AddDataFiles,
+												 logfile => \&SetLogFile } );
 
     $twig->parsefile($xml_trimmed);
     my $root = $twig->root;
@@ -1174,7 +1190,7 @@ sub RunMISP {
         if ($extension eq ".hex") {
             $open_files{$file}{"type"} = "hex";
         } elsif ($extension eq ".s19" || $extension eq ".s28" || $extension eq ".s37" ||
-                 $extension eq ".srec" || $extension eq ".srecord") {
+                 $extension eq ".srec" || $extension eq ".srecord" || $extension eq ".mot") {
             $open_files{$file}{"type"} = "srec";
         } elsif ($extension eq ".bin") {
             $open_files{$file}{"type"} = "bin";
@@ -1446,4 +1462,10 @@ sub AddDataFiles {
     }
     
     ### TO DO: Maybe add support for multiple common data files and device specific files. ###
+}
+
+# Handler that will set the log file to be output in the QA directory.
+sub SetLogFile {
+	my ($twig, $elt) = @_;
+	$elt->set_text($QA_dir . $elt->text());
 }
