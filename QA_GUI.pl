@@ -17,6 +17,8 @@ use POSIX;
 
 # NOTE: I had to modify Hex::Record.pm line 388. It wasn't counting the end-of-line CRC in the byte count that comes after the record type.
 
+# PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
+
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
 #		 Win32::Process may be good for this, too.
@@ -55,12 +57,14 @@ my $bytes_per_read = 4;
 my $cancel_clicked = 0;
 my @missing_addr = ();
 my $max_port = 1;
+my $log_file = "Better.log";
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
 # I'll open this in the Run Button event section.
-# open my $to_errors, '>', \$error_log or die "Can't open \$to_errors: $!\n";
+# Also a file handle to the log output file.
 my $to_errors;
 my $to_warnings;
+my $to_log_file;
 
 #####################
 
@@ -85,6 +89,11 @@ my $main = Win32::GUI::Window->new(-name => 'Main',
 my $script_dir = (fileparse($0))[1];  # The path where QA_GUI.pl (and icons) exists
 my $small_icon = new Win32::GUI::Icon($script_dir . 'checkmark_new_small.ico');
 my $big_icon = new Win32::GUI::Icon($script_dir . 'checkmark_new.ico');
+
+# my $data_dir = "$ENV{PAR_TEMP}\\inc\\"; # The path where PAR::Packer files exist.
+# my $small_icon = new Win32::GUI::Icon($data_dir . 'checkmark_new_small.ico');
+# my $big_icon = new Win32::GUI::Icon($data_dir . 'checkmark_new.ico');
+
 $main->SetIcon($small_icon, 0);
 $main->SetIcon($big_icon, 1);
 
@@ -149,22 +158,33 @@ my $endian = $main ->AddCheckbox(-text => 'Reverse endianness',
 								 );
 
 my $full_runs = $main->AddTextfield(-name => 'FullRuns',
-                                     -height => 20,
-                                     -width => 55,
-                                     -top => $read_bytes->Top() + $read_bytes->Height() + $body_above,
-                                     -left => $body_margin,
-                                     -prompt => [ 'Full sequence runs: ', 100 ],
-                                     -text => '1',
-                                     -align => 'center');
+                                    -height => 20,
+                                    -width => 55,
+                                    -top => $read_bytes->Top() + $read_bytes->Height() + $body_above,
+                                    -left => $body_margin,
+                                    -prompt => [ 'Full sequence runs: ', 100 ],
+                                    -text => '1',
+                                    -align => 'center');
                             
 my $full_updown = $main->AddUpDown(-autobuddy => 0,
                                    -setbuddy => 1,
                                    -arrowkeys => 0);
 $full_updown->SetBuddy($full_runs);
 $full_updown->Range(1, 2000);
+									
+my $even_odd_check = $main->AddCheckbox(-text => 'Evens/Odds test',
+                                 -top => $full_runs->Top(),
+                                 -left => $full_updown->Left() + $full_updown->Width() + 25
+                                 # -disabled => 1
+								 #-checked => 1
+								 );
+								 
+my $append_check = $main->AddCheckbox(-text => 'Append to log',
+									  -top => $full_runs->Top() + $full_runs->Height() + $body_above,
+									  -left => $body_margin);
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
-							-top => $full_runs->Top() + $full_runs->Height() + $header_above,
+							-top => $append_check->Top() + $append_check->Height() + $header_above,
                             -left => $header_margin,
                             -font => $heading);
 
@@ -395,6 +415,8 @@ sub Run_Click {
     $bytes_per_read = $read_bytes->Text(); 
     my $full_sequence = $full_text->Text();
 	my $full_num = $full_runs->Text();
+	my $even_odd = $even_odd_check->Checked();
+	my $append = $append_check->Checked();
 	$max_port = 1;
 	my $num_MWs = 1;
 	$cancel_clicked = 0;
@@ -402,9 +424,6 @@ sub Run_Click {
     
     # Clear the log window for a new run. Maybe...
     $log_text->Change(-text => '');
-    
-    # $log_text->Append("foo") if $page_erase_check->Checked();
-    # return 1 if $verify_check->Checked();
     
     # Show the log window if it is not already shown.
     if (not $log_window->IsVisible()) {
@@ -417,9 +436,14 @@ sub Run_Click {
         $log_window->Show();
     }
     
-    # Open the "file handle" for printing to the log strings.
+    # Open the "file handle" for printing to the log strings and file handle for the log file.
     open $to_errors, '>', \$error_log or die "Can't open \$to_errors: $!\n";
 	open $to_warnings, '>', \$warning_log or die "Can't open \$to_warnings: $!\n";
+	if ($append) {
+		open $to_log_file, '>>', $QA_dir . $log_file or die "Couldn't open file '$QA_dir$log_file'. $!\n";
+	} else {
+		open $to_log_file, '>', $QA_dir . $log_file or die "Couldn't open file '$QA_dir$log_file'. $!\n";
+	}
     
     # Set up commands hash if not auto-detecting commands.
     if (not $auto_detect) {
@@ -442,8 +466,12 @@ sub Run_Click {
     # Create a directory for the QA files if it doesn't already exist.
     make_path $QA_dir if not -d $QA_dir;
 
-    # Delete all files generated by this script prior to running anew.
-	unlink glob $QA_dir . "*";
+    # Delete all files generated by this script prior to running anew. Except the log file if set to append.
+	if ($append_check->Checked()) {
+		unlink grep { !/$log_file/ } glob $QA_dir . "*";
+	} else {
+		unlink glob $QA_dir . "*";
+	}
 
     #-------------------#
 
@@ -602,6 +630,7 @@ sub Run_Click {
 	@test_result = RunMISP($self_test_string, $xml_out);
 	Cleanup() if $cancel_clicked;
 	return 1 if $cancel_clicked;
+	print $to_log_file FormatHeader("MW Self-test") . $misp_output;
 	$log_text->Append("\tSelf-test: $test_result[0]\r\n");
 	if ($test_result[0] eq "FAILED") {
 		print $to_errors "ERROR: MultiWriter self-test failed.\r\n";
@@ -625,6 +654,7 @@ sub Run_Click {
         @test_result = RunMISP("-k", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Proper ID") . $misp_output;
         $log_text->Append("\tTest with proper ID: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_errors "ERROR: Device ID test failed with given ID. See log for details.\r\n";
@@ -643,6 +673,7 @@ sub Run_Click {
         @test_result = RunMISP("-k", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("False ID") . $misp_output;
         $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
             print $to_errors "ERROR: Device ID test passed with altered ID. See log for details.\r\n";
@@ -670,6 +701,7 @@ sub Run_Click {
         @test_result = RunMISP($erase_command, $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Erase") . $misp_output;
         $log_text->Append("\tErase operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_errors "ERROR: Chip erase failed. See log for details.\r\n";
@@ -680,6 +712,7 @@ sub Run_Click {
         @test_result = RunMISP("-b", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Blank after erase") . $misp_output;
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tBlank check while blank: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
@@ -691,6 +724,7 @@ sub Run_Click {
         @test_result = RunMISP("-v", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Verify after erase") . $misp_output;
 		if ($test_result[0] eq "NO_COMMAND") {
 			$log_text->Append("\tVerify while blank: SKIPPED\r\n");
 		} else {
@@ -703,6 +737,7 @@ sub Run_Click {
         
         # Do read tests, unless there is no --read command in the setup.
         if (exists $commands{"--read"}) {
+			print $to_log_file FormatHeader("Reads after erase");
             foreach my $mem_type (keys %memory_types) {
                 my %read_errors = ();
                 
@@ -711,6 +746,7 @@ sub Run_Click {
                 RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
 				Cleanup() if $cancel_clicked;
 				return 1 if $cancel_clicked;
+				print $to_log_file $misp_output;
                 
                 # Throw the data returned from all addresses into an array.
                 my @data = $misp_output =~ m/Device Memory.*=\s(.*)/g;
@@ -727,7 +763,8 @@ sub Run_Click {
                 $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"bottom"}[0], $addresses{$mem_type}{"bottom"}[-1], $mem_type);
                 RunMISP("--read", $xml_out, $range);  # Read the bottom of the bank.  
 				Cleanup() if $cancel_clicked;
-				return 1 if $cancel_clicked;  
+				return 1 if $cancel_clicked;
+				print $to_log_file $misp_output;
 
                 # Throw the data returned from all addresses into an array.
                 @data = $misp_output =~ m/Device Memory.*=\s(.*)/g;
@@ -767,6 +804,7 @@ sub Run_Click {
         @test_result = RunMISP("-p", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Program") . $misp_output;
         $log_text->Append("\tProgram operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_errors "ERROR: Programming failed. See log for details.\r\n";
@@ -777,6 +815,7 @@ sub Run_Click {
         @test_result = RunMISP("-p", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Program again") . $misp_output;
         $log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
             print $to_errors "ERROR: Programming failed when the chip is already programmed. See log for details.\r\n";
@@ -787,6 +826,7 @@ sub Run_Click {
         @test_result = RunMISP("-b", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Blank after program") . $misp_output;
 		if ($test_result[0] eq "NO_COMMAND") {
 			$log_text->Append("\tBlank check while programmed: SKIPPED\r\n");
 		} else {
@@ -801,6 +841,7 @@ sub Run_Click {
         @test_result = RunMISP("-v", $xml_out);
 		Cleanup() if $cancel_clicked;
 		return 1 if $cancel_clicked;
+		print $to_log_file FormatHeader("Verify after program") . $misp_output;
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tVerify while programmed: $test_result[0]\r\n");
 		
@@ -811,6 +852,7 @@ sub Run_Click {
         
         # If the verify command exists, modify bytes in the data file to verify verify.
         if (not exists $missing_commands{"-v"}) {
+			print $to_log_file FormatHeader("Verify with modified data file");
         
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
@@ -850,6 +892,7 @@ sub Run_Click {
 						@test_result = RunMISP("-v", $xml_verify);
 						Cleanup() if $cancel_clicked;
 						return 1 if $cancel_clicked;
+						print $to_log_file $misp_output;
 						$log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
 						if ($test_result[0] eq "PASSED") {
 							print $to_errors "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
@@ -868,6 +911,7 @@ sub Run_Click {
             @test_result = RunMISP("-w", $xml_out);
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
+			print $to_log_file FormatHeader("Write config words") . $misp_output;
             $log_text->Append("\tWrite config words: $test_result[0]\r\n");
             if ($test_result[0] eq "FAILED") {
                 print $to_errors "ERROR: Config word write failed. See log for details.\r\n";
@@ -877,6 +921,7 @@ sub Run_Click {
         
         # Do read top/bottom tests, unless there is no --read command in the setup.
         if (exists $commands{"--read"}) {
+			print $to_log_file FormatHeader("Read after programming");
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
                 next if not exists $data_files{$mem_type}; # eq "";
@@ -886,6 +931,7 @@ sub Run_Click {
                 # Make a string containing the range of addresses to read and the memory type to read from
                 my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{"top"}[0], $addresses{$mem_type}{"top"}[-1], $mem_type); 
 				RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
+				print $to_log_file $misp_output;
 				Cleanup() if $cancel_clicked;
 				return 1 if $cancel_clicked;
                 
@@ -923,6 +969,7 @@ sub Run_Click {
                 RunMISP("--read", $xml_out, $range);  # Read the bottom of the bank.    
 				Cleanup() if $cancel_clicked;
 				return 1 if $cancel_clicked;
+				print $to_log_file $misp_output;
 
                 # Throw the data returned from all addresses into an array.
                 @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g;
@@ -975,12 +1022,14 @@ sub Run_Click {
         print $to_errors "ERROR: No full sequence set up. This probably isn't a good choice.\r\n";
         $error_count++;
     } else {
+		print $to_log_file FormatHeader("Full sequence");
 		$log_text->Append("\r\nRunning full sequence...\r\n");
 		
 		for my $run (1 .. $full_num) {
 			@test_result = RunMISP($full_sequence, $xml_out);
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
+			print $to_log_file $misp_output;
 			$log_text->Append("\tFull sequence trial $run: $test_result[0]");
 			if ($test_result[0] eq "FAILED") {
 				$log_text->Append("\r\n");
@@ -996,6 +1045,37 @@ sub Run_Click {
 		if (scalar @warnings) {
 			print $to_errors "MISP warnings:\r\n";
 			print $to_errors "\t$_\r\n" foreach (@warnings);
+		}
+		
+		# Even/Odd pcb test (if enabled)
+		if ($even_odd) {
+			$log_text->Append("\r\nRunning Evens/Odds tests...\r\n");
+		
+			# Generate even mask and run test
+			my $pcb_mask = "";
+			$pcb_mask = ($_ % 2) . $pcb_mask for (1 .. $max_port);
+			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
+			Cleanup() if $cancel_clicked;
+			return 1 if $cancel_clicked;
+			print $to_log_file FormatHeader("Even PCBs") . $misp_output;
+			$log_text->Append("\tEven PCBs test: $test_result[0]\r\n");
+			if ($test_result[0] eq "FAILED") {
+				print $to_errors "ERROR: Even-PCBs-only test failed. See log for details.\r\n";
+				$error_count++;
+			}
+			
+			# Generate odd mask and run test
+			$pcb_mask = "";
+			$pcb_mask = (($_ + 1) % 2) . $pcb_mask for (1 .. $max_port);
+			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
+			Cleanup() if $cancel_clicked;
+			return 1 if $cancel_clicked;
+			print $to_log_file FormatHeader("Odd PCBs") . $misp_output;
+			$log_text->Append("\tOdd PCBs test: $test_result[0]\r\n");
+			if ($test_result[0] eq "FAILED") {
+				print $to_errors "ERROR: Odd-PCBs-only test failed. See log for details.\r\n";
+				$error_count++;
+			}
 		}
     }
     
@@ -1024,7 +1104,16 @@ sub Cleanup {
     %data_files = ();
     %commands = ();
     close $to_errors;
+	close $to_warnings;
+	close $to_log_file;
 	CloseAllDataFiles();
+}
+
+sub FormatHeader {
+	my $str = shift;
+	my $len = length $str;
+	my $border = "#" . "=" x ($len + 8) . "#\n";
+	return "\n" . $border . "#--- $str ---#\n" . $border;
 }
 
 sub Main_Resize {
