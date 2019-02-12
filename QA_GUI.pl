@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-# use lib "\\\\csdc\\Shared\\Share\\AnthonyF\\activePerl\\lib";
+# use lib '\\\csdc\Shared\FIXTURES\Perl_libs\ActivePerl_5.24';
 
 use 5.010;
 use XML::Twig;
@@ -14,10 +14,13 @@ use Hex::Record;
 use Win32::GUI();
 use Win32::GUI::DropFiles;
 use POSIX;
+use Config::IniFiles;
 
 # NOTE: I had to modify Hex::Record.pm line 388. It wasn't counting the end-of-line CRC in the byte count that comes after the record type.
+#			Old line:     	my $byte_count = @$bytes_hex_ref + length($total_addr_hex) / 2;
+#			Modified line:	my $byte_count = @$bytes_hex_ref + length($total_addr_hex) / 2 + 1;
 
-# PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
+# PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
 
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
@@ -31,6 +34,7 @@ use POSIX;
 # TO DO: For tests that pass with a FAILED result, make sure that the test was actually run.
 #		 Don't allow a FAILED result due to something like failure to read the data file get through as 
 #		 a pass.
+#		 I may have accomplished this, but there may be false pass scenarios I haven't caught. Something to watch out for.
 
 # TO DO: Maybe make this compatible with MW2? Or maybe not worth it...
 
@@ -421,6 +425,14 @@ sub Run_Click {
 	my $num_MWs = 1;
 	$cancel_clicked = 0;
 	@missing_addr = ();
+    $error_log = "";
+	$warning_log = "";
+	$error_count = 0;
+    %missing_commands = ();
+    %memory_types = ();
+    %blank_data = ();
+    %data_files = ();
+    %commands = ();
     
     # Clear the log window for a new run. Maybe...
     $log_text->Change(-text => '');
@@ -437,8 +449,8 @@ sub Run_Click {
     }
     
     # Open the "file handle" for printing to the log strings and file handle for the log file.
-    open $to_errors, '>', \$error_log or die "Can't open \$to_errors: $!\n";
-	open $to_warnings, '>', \$warning_log or die "Can't open \$to_warnings: $!\n";
+    open $to_errors, '>>', \$error_log or die "Can't open \$to_errors: $!\n";
+	open $to_warnings, '>>', \$warning_log or die "Can't open \$to_warnings: $!\n";
 	if ($append) {
 		open $to_log_file, '>>', $QA_dir . $log_file or die "Couldn't open file '$QA_dir$log_file'. $!\n";
 	} else {
@@ -649,7 +661,7 @@ sub Run_Click {
 		print $to_warnings "WARNING: No -k command in MISP setup. ID check skipped. Does this chip have an ID? \r\n";
     } else {
         # First test uses base XML file, presumably with the correct device ID
-        $log_text->Append("Running ID tests...\r\n");
+        $log_text->Append("\r\nRunning ID tests...\r\n");
 
         @test_result = RunMISP("-k", $xml_out);
 		Cleanup() if $cancel_clicked;
@@ -657,7 +669,7 @@ sub Run_Click {
 		print $to_log_file FormatHeader("Proper ID") . $misp_output;
         $log_text->Append("\tTest with proper ID: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Device ID test failed with given ID. See log for details.\r\n";
+            print $to_errors "ERROR: Device ID test failed with given ID.\r\n";
             $error_count++;
         }
 
@@ -676,7 +688,7 @@ sub Run_Click {
 		print $to_log_file FormatHeader("False ID") . $misp_output;
         $log_text->Append("\tTest with wrong ID: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
         if ($test_result[0] eq "PASSED") {
-            print $to_errors "ERROR: Device ID test passed with altered ID. See log for details.\r\n";
+            print $to_errors "ERROR: Device ID test passed with altered ID.\r\n";
             $error_count++;
         }
     }
@@ -704,7 +716,7 @@ sub Run_Click {
 		print $to_log_file FormatHeader("Erase") . $misp_output;
         $log_text->Append("\tErase operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Chip erase failed. See log for details.\r\n";
+            print $to_errors "ERROR: Chip erase failed.\r\n";
             $error_count++;
         }
         
@@ -716,7 +728,7 @@ sub Run_Click {
 		$test_result[0] = "SKIPPED" if $test_result[0] eq "NO_COMMAND";
         $log_text->Append("\tBlank check while blank: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Blank check failed. Chip not blank after erase. See log for details.\r\n";
+            print $to_errors "ERROR: Blank check failed. Chip not blank after erase.\r\n";
             $error_count++;
         }
         
@@ -731,7 +743,7 @@ sub Run_Click {
 			$log_text->Append("\tVerify while blank: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
 		}
         if ($test_result[0] eq "PASSED") {
-            print $to_errors "ERROR: Verify succeeded after erase. See log for details.\r\n";
+            print $to_errors "ERROR: Verify succeeded after erase.\r\n";
             $error_count++;
         }
         
@@ -780,6 +792,10 @@ sub Run_Click {
                     print $to_errors "ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                     "    Data read was $read_errors{$_}.\r\n" foreach (sort keys %read_errors);
 					$error_count += scalar keys %read_errors;
+                } elsif (scalar @data == 0) {
+					$log_text->Append("\tRead programmed data: FAILED\r\n");
+					print $to_errors "ERROR: No data was able to be read from the part.\r\n";
+					$error_count++;
                 } else {
                     $log_text->Append("\tRead blank data ($mem_type): PASSED\r\n");
                 }
@@ -807,7 +823,7 @@ sub Run_Click {
 		print $to_log_file FormatHeader("Program") . $misp_output;
         $log_text->Append("\tProgram operation: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Programming failed. See log for details.\r\n";
+            print $to_errors "ERROR: Programming failed.\r\n";
             $error_count++;
         }
         
@@ -818,7 +834,7 @@ sub Run_Click {
 		print $to_log_file FormatHeader("Program again") . $misp_output;
         $log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Programming failed when the chip is already programmed. See log for details.\r\n";
+            print $to_errors "ERROR: Programming failed when the chip is already programmed.\r\n";
             $error_count++;
         }
         
@@ -833,7 +849,7 @@ sub Run_Click {
 			$log_text->Append("\tBlank check while programmed: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
 		}
         if ($test_result[0] eq "PASSED") {
-            print $to_errors "ERROR: Blank check passed. Chip blank after programming. See log for details.\r\n";
+            print $to_errors "ERROR: Blank check passed. Chip blank after programming.\r\n";
             $error_count++;
         }
         
@@ -846,7 +862,7 @@ sub Run_Click {
         $log_text->Append("\tVerify while programmed: $test_result[0]\r\n");
 		
         if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Verify failed after programming. See log for details.\r\n";
+            print $to_errors "ERROR: Verify failed after programming.\r\n";
             $error_count++;
         }
         
@@ -914,7 +930,7 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Write config words") . $misp_output;
             $log_text->Append("\tWrite config words: $test_result[0]\r\n");
             if ($test_result[0] eq "FAILED") {
-                print $to_errors "ERROR: Config word write failed. See log for details.\r\n";
+                print $to_errors "ERROR: Config word write failed.\r\n";
                 $error_count++;
             }
         }
@@ -977,7 +993,7 @@ sub Run_Click {
 				# Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
                 @good_data = @{ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{"bottom"}[0], scalar @{$addresses{$mem_type}{"bottom"}})};
                 
-				next if $good_data[0] eq "ERROR";       			
+				next if $good_data[0] eq "ERROR";
                 
                 # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
 				foreach my $i (0 .. $#data) {
@@ -1002,6 +1018,10 @@ sub Run_Click {
                     print $to_errors "ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                         "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
 					$error_count += scalar keys %read_errors;
+				} elsif (scalar @data == 0) {
+					$log_text->Append("\tRead programmed data: FAILED\r\n");
+					print $to_errors "ERROR: No data was able to be read from the part.\r\n";
+					$error_count++;
                 } else {
                     $log_text->Append("\tRead programmed data ($mem_type): PASSED\r\n");
                 }
@@ -1033,7 +1053,7 @@ sub Run_Click {
 			$log_text->Append("\tFull sequence trial $run: $test_result[0]");
 			if ($test_result[0] eq "FAILED") {
 				$log_text->Append("\r\n");
-				print $to_errors "ERROR: Full sequence trial $run failed. See log for details.\r\n";
+				print $to_errors "ERROR: Full sequence trial $run failed.\r\n";
 				$error_count++;
 			} elsif ($test_result[0] eq "PASSED") {
 				$log_text->Append(" in $test_result[1] seconds\r\n");
@@ -1060,7 +1080,7 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Even PCBs") . $misp_output;
 			$log_text->Append("\tEven PCBs test: $test_result[0]\r\n");
 			if ($test_result[0] eq "FAILED") {
-				print $to_errors "ERROR: Even-PCBs-only test failed. See log for details.\r\n";
+				print $to_errors "ERROR: Even-PCBs-only test failed.\r\n";
 				$error_count++;
 			}
 			
@@ -1073,11 +1093,39 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Odd PCBs") . $misp_output;
 			$log_text->Append("\tOdd PCBs test: $test_result[0]\r\n");
 			if ($test_result[0] eq "FAILED") {
-				print $to_errors "ERROR: Odd-PCBs-only test failed. See log for details.\r\n";
+				print $to_errors "ERROR: Odd-PCBs-only test failed.\r\n";
 				$error_count++;
 			}
 		}
     }
+	
+	#----------------------#
+
+    #- csMISPV3.ini Check -#
+
+    #----------------------#
+	
+	if (not -f 'C:\CheckSum\MISP\Fixture USBDrive\Bin\csMISPV3.ini') {
+        print $to_errors "ERROR: csMISPV3.ini not found.";
+		$error_count++;
+    } else {
+		$log_text->Append("\r\nChecking files...\r\n");
+		my $cfg = Config::IniFiles->new( -file => 'C:\CheckSum\MISP\Fixture USBDrive\Bin\csMISPV3.ini' );
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock = " . $cfg->val('system', 'fpgaClock') .
+			". The default is 180.\r\n" if $cfg->val('system', 'fpgaClock') != 180;
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock2 = " . $cfg->val('system', 'fpgaClock2') .
+			". The default is 240.\r\n" if $cfg->val('system', 'fpgaClock2') != 240;
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: initTimeout = " . $cfg->val('system', 'initTimeout') .
+			". The default is 10000 ms.\r\n" if $cfg->val('system', 'initTimeout') ne "10000 ms";
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: cmdTimeout = " . $cfg->val('system', 'cmdTimeout') .
+			". The default is 30000 ms.\r\n" if $cfg->val('system', 'cmdTimeout') ne "30000 ms";
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: globalTimeout = " . $cfg->val('system', 'globalTimeout') .
+			". The default is 60s.\r\n" if $cfg->val('system', 'globalTimeout') ne "60s";
+		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock = " . $cfg->val('system', 'bufferSize') .
+			". The default is 4096.\r\n" if $cfg->val('system', 'bufferSize') != 4096;
+			
+		$log_text->Append("\tDefault csMISPV3.ini: " . (($warning_log =~ m/csMISPV3\.ini/) ? "WARNING" : "PASSED") . "\r\n");
+	}
     
     #-------------------#
 
@@ -1085,7 +1133,8 @@ sub Run_Click {
 
     #-------------------#
         
-    $log_text->Append("\r\n" . $warning_log . "\r\n" . $error_log);
+    $log_text->Append("\r\n" . $warning_log) if (length $warning_log != 0);
+	$log_text->Append("\r\n" . $error_log . "\r\nSee $QA_dir$log_file for details.\r\n") if (length $error_log != 0);
     $log_text->Append("\r\nSUMMARY: There " . ($error_count == 1 ? "was" : "were") . 
         " $error_count error" . ($error_count == 1 ? "" : "s") . 
         "." . ($error_count == 0 ? " Ship it.\r\n" : "\r\n\r\n\r\n"));
@@ -1096,13 +1145,6 @@ sub Run_Click {
 }
 
 sub Cleanup {
-    $error_log = "";
-	$error_count = 0;
-    %missing_commands = ();
-    %memory_types = ();
-    %blank_data = ();
-    %data_files = ();
-    %commands = ();
     close $to_errors;
 	close $to_warnings;
 	close $to_log_file;
@@ -1217,10 +1259,15 @@ sub RunMISP {
         # Snag the pass/fail result and total test time.
         $misp_output =~ m/ISP Tests:\s*(PASSED|FAILED)\s\((\d*.\d*) Seconds/;
         if (not defined $1) {
-            $log_text->Append("ERROR: $command test incomplete, no pass or fail recorded. See log for details.\r\n\r\n");
             $error_count++;
             return "ERROR";
         }
+		
+		# Try to prevent false passes on operations that expect a failure.
+		if ($misp_output =~ m/(?:No MultiWriter Boards could be found in the system|ISP Init failed)/) {
+			$error_count++;
+			return "ERROR";
+		}
 
         return ($1, $2);
     }
