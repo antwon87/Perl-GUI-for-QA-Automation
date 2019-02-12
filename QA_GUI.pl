@@ -61,6 +61,7 @@ my $bytes_per_read = 4;
 my $cancel_clicked = 0;
 my @missing_addr = ();
 my $max_port = 1;
+my $numPCBS = 1;
 my $log_file = "Better.log";
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
@@ -518,7 +519,7 @@ sub Run_Click {
                                                  Bank => \&AddBanks,
                                                  DataFile => \&AddDataFiles,
 												 logfile => \&SetLogFile,
-												 portconnection => \&PortCount } );
+												 dev => \&PortCount } );
 
     $twig->parsefile($xml_trimmed);
     my $root = $twig->root;
@@ -1073,7 +1074,7 @@ sub Run_Click {
 		
 			# Generate even mask and run test
 			my $pcb_mask = "";
-			$pcb_mask = ($_ % 2) . $pcb_mask for (1 .. $max_port);
+			$pcb_mask = ($_ % 2) . $pcb_mask for (1 .. $numPCBs);
 			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
@@ -1086,7 +1087,7 @@ sub Run_Click {
 			
 			# Generate odd mask and run test
 			$pcb_mask = "";
-			$pcb_mask = (($_ + 1) % 2) . $pcb_mask for (1 .. $max_port);
+			$pcb_mask = (($_ + 1) % 2) . $pcb_mask for (1 .. $numPCBs);
 			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
@@ -1587,10 +1588,11 @@ sub SetLogFile {
 	$elt->set_text($QA_dir . $elt->text());
 }
 
-# Handler to track the highest MW port in use, and therefore the number of MW cards.
+# Handler to track the highest MW port and PCB# in use, and therefore the number of MW cards.
 # Arg1: $twig - reference to twig object
-# Arg2: $elt - reference to twig element with name of "portconnection"
+# Arg2: $elt - reference to twig element with name of "dev"
 sub PortCount {
 	my ($twig, $elt) = @_;
-	$max_port = $elt->text() if $elt->text() > $max_port;
+	$max_port = $elt->first_child("portconnection")->text() if $elt->first_child("portconnection")->text() > $max_port;
+	$numPCBs = $elt->first_child("PCB")->text() if $elt->first_child("PCB")->text() > $numPCBs;
 }
