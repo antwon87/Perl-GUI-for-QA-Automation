@@ -55,13 +55,16 @@ my $modified_data_file = $QA_dir . "QA_data";
 my $error_log = "";  # This string will contain all errors to be displayed at the end of the test.
 my $warning_log = ""; # This string will contain all warnings to be displayed at the end of the test.
 my %blank_data = ();
-my %data_files = ();  # $data_files{$mem_type}
+# Data files hash info:
+#    For common data files - $data_files{$mem_type}{"Common"}[0 .. number of common data files] = $file
+#	 For unique data files - $data_files{$mem_type}{"Unique"}{PCB Number} = $file
+my %data_files = ();  
 my $auto_detect = 0;
 my $bytes_per_read = 4;
 my $cancel_clicked = 0;
 my @missing_addr = ();
 my $max_port = 1;
-my $numPCBS = 1;
+my $numPCBs = 1;
 my $log_file = "Better.log";
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
@@ -609,7 +612,7 @@ sub Run_Click {
     } else {
         foreach my $mem_type (keys %memory_types) {
             # Skip this memory type if there is no associated data file.
-            next if not exists $data_files{$mem_type}; # eq "";
+            next if not exists $data_files{$mem_type}{"Common"}; # eq "";
             
             # Find the middle of the total size.
             my $total_size = 0;
@@ -873,7 +876,7 @@ sub Run_Click {
         
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
-                next if not exists $data_files{$mem_type}; # eq "";
+                next if not exists $data_files{$mem_type}{"Common"}; # eq "";
                     
                 # Find the current data file field in the XML.
                 my $elt = $root->next_elt("DataFile");
@@ -1569,15 +1572,30 @@ sub AddBanks {
 sub AddDataFiles {
     my ($twig, $elt) = @_;
     
-    # Only grab common data files.
-    if (($elt->parent()->gi() eq "CommonData") && ($elt->first_child("Enable")->text() eq "Yes")) {
+    # Only grab enabled data files.
+    if ($elt->first_child("Enable")->text() eq "Yes") {
 		my $file = $elt->first_child("RecentFilePath")->text();
+		
 		# Give the file a full path if it has a relative path in the xml.
-		$file = "C:\\CheckSum\\MISP\\Fixture USBDrive\\" . substr($file, 2) if substr($file, 0, 1) eq ".";
-        $data_files{$elt->att("Memory_Type")} = $file;
+		if (substr($file, 0, 1) eq ".") {
+			$file = "C:\\CheckSum\\MISP\\Fixture USBDrive\\" . substr($file, 2);
+		} else {
+			print $to_warnings "WARNING: $file not referenced using relative path.\r\n";
+		}
+		
+		# If a common data file, add it to the array of common data files.
+		push $data_files{$elt->att("Memory_Type")}{"Common"}, $file if ($elt->parent()->gi() eq "CommonData");
+		
+		# If a device-specific data file, add it to the unique hash (as value) along with its associated pcb number (as key).
+		if ($elt->parent()->gi() eq "DeviceData") {
+			my $dev = $elt->parent()->parent();
+			my $pcb = $dev->first_child("PCB")->text();
+			$data_files{$elt->att("Memory_Type")}{"Unique"}{$pcb} = $file;
+		}
     }
     
-    ### TO DO: Maybe add support for multiple common data files and device specific files. ###
+    ### TO DO: Maybe add support for multiple common data files and device specific files. 
+	###		   Done in this part, but implementation in other parts of code is not complete.
 }
 
 # Handler that will set the log file to be output in the QA directory.
