@@ -413,7 +413,7 @@ sub Run_Click {
     my $xml_verify = $QA_dir . 'verify_op.xml';
     my @test_result = ();
     my $read_size_max = 16;
-    my %addresses = ();  # $addresses{$mem_type}{top/bot}[addresses], stores addresses used for read/verify
+    my %addresses = ();  # $addresses{$mem_type}{top/bottom/mid}[addresses], stores addresses used for read/verify
     my %read_once = ();
     $auto_detect = $auto_check->Checked();
     my $reverse_endian = $endian->Checked();
@@ -892,9 +892,9 @@ sub Run_Click {
                 $twig->print_to_file($xml_verify, PrettyPrint => "indented" );
                 
                 # Modify a byte at each of the top, middle, and bottom.
-                foreach (keys %{$addresses{$mem_type}}) {					
+                foreach my $region (keys %{$addresses{$mem_type}}) {					
                     # Read the current byte.
-                    my $temp_data = ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], 1);
+                    my $temp_data = ReadDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$region}[0], 1);
                     
                     # Increment said byte and store it as a string again. Skip if it wasn't found in the data file.
 					if ((defined $$temp_data[0]) && ($$temp_data[0] ne "not found")) {
@@ -903,7 +903,7 @@ sub Run_Click {
                     
 						# Write modified byte to new file. The data structure in memory will be restored to the previous
 						#   state after writing out the modified file.
-						WriteDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$_}[0], $temp_data);
+						WriteDataFile($data_files{$mem_type}, $mem_type, $addresses{$mem_type}{$region}[0], $temp_data);
 						
 						# Verify with the modified file, expecting a failure.
 						@test_result = RunMISP("-v", $xml_verify);
@@ -912,7 +912,7 @@ sub Run_Click {
 						print $to_log_file $misp_output;
 						$log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
 						if ($test_result[0] eq "PASSED") {
-							print $to_errors "ERROR: Verify passed after modifying address $addresses{$mem_type}{$_}[0] in the data file.\r\n";
+							print $to_errors "ERROR: Verify passed after modifying address $addresses{$mem_type}{$region}[0] in the data file.\r\n";
 							$error_count++;
 						}
 					}
