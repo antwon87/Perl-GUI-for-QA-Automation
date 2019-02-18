@@ -61,7 +61,7 @@ my $bytes_per_read = 4;
 my $cancel_clicked = 0;
 my @missing_addr = ();
 my $max_port = 1;
-my $numPCBS = 1;
+my $numPCBs = 1;
 my $log_file = "Better.log";
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
