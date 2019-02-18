@@ -1075,7 +1075,7 @@ sub Run_Click {
 			# Generate even mask and run test
 			my $pcb_mask = "";
 			$pcb_mask = ($_ % 2) . $pcb_mask for (1 .. $numPCBs);
-			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
+			@test_result = RunMISP($full_sequence, $xml_out, "-s $pcb_mask");
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
 			print $to_log_file FormatHeader("Even PCBs") . $misp_output;
@@ -1088,7 +1088,7 @@ sub Run_Click {
 			# Generate odd mask and run test
 			$pcb_mask = "";
 			$pcb_mask = (($_ + 1) % 2) . $pcb_mask for (1 .. $numPCBs);
-			@test_result = RunMisp($full_sequence, $xml_out, "-s $pcb_mask");
+			@test_result = RunMISP($full_sequence, $xml_out, "-s $pcb_mask");
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
 			print $to_log_file FormatHeader("Odd PCBs") . $misp_output;
