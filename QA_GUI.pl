@@ -448,6 +448,7 @@ sub Run_Click {
                           # -left => 5);
         $log_window->Show();
     }
+	$log_window->BringWindowToTop();
     
     # Open the "file handle" for printing to the log strings and file handle for the log file.
     open $to_errors, '>>', \$error_log or die "Can't open \$to_errors: $!\n";
