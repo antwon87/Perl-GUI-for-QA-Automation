@@ -21,8 +21,9 @@ use Config::IniFiles;
 #			Modified line:	my $byte_count = @$bytes_hex_ref + length($total_addr_hex) / 2 + 1;
 
 # PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
+# Doesn't work very well... or at all
 
-# TO DO: Make read test better. Try to only read from addresses that are in the data file. The extreme top and bottom of the memory space may not be in the data file and therefore don't make for a very good test. Similarly for verify, look to change bytes that are actually in the data file, not only the extreme ends of the memory range.
+# TO DO: Add support for parts with alignment 2 (word-addressed).
 
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
@@ -975,7 +976,7 @@ sub Run_Click {
 						Cleanup() if $cancel_clicked;
 						return 1 if $cancel_clicked;
 						print $to_log_file $misp_output;
-						$log_text->Append("\tVerify with modified data file: " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
+						$log_text->Append("\tVerify with modified data file ($mem_type $region): " . ($test_result[0] eq "FAILED" ? "PASSED" : "FAILED") . "\r\n");
 						if ($test_result[0] eq "PASSED") {
 							print $to_errors "ERROR: Verify passed after modifying address $addresses{$mem_type}{$region}{\"addr\"}[0] in the data file.\r\n";
 							$error_count++;
@@ -1103,7 +1104,7 @@ sub Run_Click {
 		# Report any warnings from the misp output.
 		my @warnings = $misp_output =~ m/Warning:\s*(.*)/g;
 		if (scalar @warnings) {
-			print $to_errors "MISP warnings:\r\n";
+			print $to_errors "\r\nMISP warnings:\r\n";
 			print $to_errors "\t$_\r\n" foreach (@warnings);
 		}
 		
