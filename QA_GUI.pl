@@ -572,72 +572,99 @@ sub Run_Click {
         foreach my $mem_type (keys %memory_types) {
             # Find the bank with the lowest and the bank with the highest addresses
 			my @banks = sort keys %{$memory_types{$mem_type}};
-            # my ($min_bank, $max_bank) = minmax keys %{$memory_types{$mem_type}};
-			
             my $read_size = $read_size_max;
             my $size = 0;
+            # my ($min_bank, $max_bank) = minmax keys %{$memory_types{$mem_type}};
 			
-			# Search through all known data files to find which contains the lowest address.
-			# Right now, this just looks for a file that has the lowest address, but not the whole range to be read.
-			# Iterates through all addresses in all banks starting at the lowest.
-			TOP_SEARCH: for my $bank (@banks) {
-				$size = $memory_types{$mem_type}{$bank};
-				for my $addr ($bank .. $bank + $size - 1) {
-					for my $file (@{$data_files{$mem_type}{"Common"}}) {
-						if (IsAddrInFile($addr, $file, $mem_type)) {
-							$addresses{$mem_type}{"top"}{"file"} = $file;
-							# Don't overflow the bank if the start address is near its end.
-							$read_size = $bank + $size - $addr if $addr + $read_size > $bank + $size;
-							$addresses{$mem_type}{"top"}{"addr"} = [$addr .. $addr + $read_size - 1];
-							# Don't do a bottom read if this read will somehow cover the end of the memory space.
-							$read_once{$mem_type} = 1 if ($addresses{$mem_type}{"top"}{"addr"}[-1] == $bank + $size - 1);
-							last TOP_SEARCH;
+			# If there is no data file associated with this memory type, just use the extreme ends of the memory space.
+			if (scalar @{$data_files{$mem_type}{"Common"}} == 0) {
+				my $read_size = $read_size_max;
+				$size = $memory_types{$mem_type}{$banks[0]};
+
+				# If a bank is smaller than the default number of bytes to read, only read as many
+				#   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
+				if ($size <= $read_size) {
+					$read_size = $size;
+					$read_once{$mem_type} = 1 if $banks[0] == $banks[-1];
+				}
+				
+				# Set up hash containing addresses to read at the top of the memory type.
+				$addresses{$mem_type}{"top"}{"addr"} = [$banks[0] .. $banks[0] + $read_size - 1];
+			
+				# Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
+				next if ($read_once{$mem_type});
+
+				# Reset variables
+				$read_size = $read_size_max;
+				$size = $memory_types{$mem_type}{$banks[-1]};
+				$read_size = $size if ($size < $read_size);
+				
+				# Set up hash containing addresses to read at the bottom of the memory type.
+				$addresses{$mem_type}{"bottom"}{"addr"} = [$banks[-1] + $size - $read_size .. $banks[-1] + $size - 1];
+			} else {
+			
+				# Search through all known data files to find which contains the lowest address.
+				# Right now, this just looks for a file that has the lowest address, but not the whole range to be read.
+				# Iterates through all addresses in all banks starting at the lowest.
+				TOP_SEARCH: for my $bank (@banks) {
+					$size = $memory_types{$mem_type}{$bank};
+					for my $addr ($bank .. $bank + $size - 1) {
+						for my $file (@{$data_files{$mem_type}{"Common"}}) {
+							if (IsAddrInFile($addr, $file, $mem_type)) {
+								$addresses{$mem_type}{"top"}{"file"} = $file;
+								# Don't overflow the bank if the start address is near its end.
+								$read_size = $bank + $size - $addr if $addr + $read_size > $bank + $size;
+								$addresses{$mem_type}{"top"}{"addr"} = [$addr .. $addr + $read_size - 1];
+								# Don't do a bottom read if this read will somehow cover the end of the memory space.
+								$read_once{$mem_type} = 1 if ($addresses{$mem_type}{"top"}{"addr"}[-1] == $bank + $size - 1);
+								last TOP_SEARCH;
+							}
 						}
 					}
 				}
-			}
 
-			#DEPRECATED, moved into the above loops
-            # If a bank is smaller than the default number of bytes to read, only read as many
-            #   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
-            # if ($size <= $read_size) {
-                # $read_once{$mem_type} = 1 if $min_bank == $max_bank;
-            # }
+				#DEPRECATED, moved into the above loops
+				# If a bank is smaller than the default number of bytes to read, only read as many
+				#   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
+				# if ($size <= $read_size) {
+					# $read_once{$mem_type} = 1 if $min_bank == $max_bank;
+				# }
+				
+				# DEPRECATED
+				# Set up hash containing addresses to read at the top of the memory type.
+				# $addresses{$mem_type}{"top"} = [$min_bank .. $min_bank + $read_size - 1];
 			
-            # DEPRECATED
-            # Set up hash containing addresses to read at the top of the memory type.
-            # $addresses{$mem_type}{"top"} = [$min_bank .. $min_bank + $read_size - 1];
-		
-            # Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
-            next if ($read_once{$mem_type});
+				# Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
+				next if ($read_once{$mem_type});
 
-            $read_size = $read_size_max;
+				$read_size = $read_size_max;
 
-			# DEPRECATED
-            # Set up hash containing addresses to read at the bottom of the memory type.
-            # $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
-			
-			# Search through all known data files to find which contains the highest address.
-			# Right now, this just looks for a file that has the highest address, but not the whole range to be read.
-			# Iterates through all addresses in all banks starting at the highest.
-			BOT_SEARCH: for my $bank (reverse @banks) {
-				$size = $memory_types{$mem_type}{$bank};
-				for my $addr (reverse $bank .. $bank + $size - 1) {
-					for my $file (@{$data_files{$mem_type}{"Common"}}) {
-						if (IsAddrInFile($addr, $file, $mem_type)) {
-							$addresses{$mem_type}{"bottom"}{"file"} = $file;
-							# Don't underflow the bank if the start address is near its beginning.
-							$read_size = $addr - $bank + 1 if $addr - $bank + 1 < $read_size;
-							$addresses{$mem_type}{"bottom"}{"addr"} = [$addr - $read_size + 1 .. $addr];
-							last BOT_SEARCH;
+				# DEPRECATED
+				# Set up hash containing addresses to read at the bottom of the memory type.
+				# $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
+				
+				# Search through all known data files to find which contains the highest address.
+				# Right now, this just looks for a file that has the highest address, but not the whole range to be read.
+				# Iterates through all addresses in all banks starting at the highest.
+				BOT_SEARCH: for my $bank (reverse @banks) {
+					$size = $memory_types{$mem_type}{$bank};
+					for my $addr (reverse $bank .. $bank + $size - 1) {
+						for my $file (@{$data_files{$mem_type}{"Common"}}) {
+							if (IsAddrInFile($addr, $file, $mem_type)) {
+								$addresses{$mem_type}{"bottom"}{"file"} = $file;
+								# Don't underflow the bank if the start address is near its beginning.
+								$read_size = $addr - $bank + 1 if $addr - $bank + 1 < $read_size;
+								$addresses{$mem_type}{"bottom"}{"addr"} = [$addr - $read_size + 1 .. $addr];
+								last BOT_SEARCH;
+							}
 						}
 					}
 				}
-			}
 			
-			# Error if no address was found in any data file. Something must be seriously wrong for this to happen, but let's check for it anyway.
-			if ((not exists $addresses{$mem_type}{"top"}{"file"}) || (not exists $addresses{$mem_type}{"bottom"}{"file"})) {
-				print $to_errors "ERROR: Unable to find any bank addresses in data files from XML. Hopefully nobody ever sees this.\r\n";
+				# Error if no address was found in any data file. Something must be seriously wrong for this to happen, but let's check for it anyway.
+				if ((not exists $addresses{$mem_type}{"top"}{"file"}) || (not exists $addresses{$mem_type}{"bottom"}{"file"})) {
+					print $to_errors "ERROR: Unable to find any bank addresses in data files from XML. Hopefully nobody ever sees this.\r\n";
+				}
 			}
         }
     }
@@ -653,7 +680,7 @@ sub Run_Click {
     } else {
         foreach my $mem_type (keys %memory_types) {
             # Skip this memory type if there is no associated data file.
-            next if not exists $data_files{$mem_type}{"Common"}; # eq "";
+            next if (scalar @{$data_files{$mem_type}{"Common"}} == 0); # eq "";
             
             # Find the middle of the total size.
             my $total_size = 0;
@@ -928,7 +955,7 @@ sub Run_Click {
         
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
-                next if not exists $data_files{$mem_type}{"Common"};
+                next if (scalar @{$data_files{$mem_type}{"Common"}} == 0);
                 
                 # Modify a byte at each of the top, middle, and bottom.
                 foreach my $region (keys %{$addresses{$mem_type}}) {    
@@ -1007,7 +1034,7 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Read after programming");
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
-                next if not exists $data_files{$mem_type}{"Common"};
+                next if (scalar @{$data_files{$mem_type}{"Common"}} == 0);
 			
 				my %read_errors = ();	
 				
