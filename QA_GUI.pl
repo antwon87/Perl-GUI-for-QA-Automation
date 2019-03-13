@@ -577,8 +577,8 @@ sub Run_Click {
             # my ($min_bank, $max_bank) = minmax keys %{$memory_types{$mem_type}};
 			
 			# If there is no data file associated with this memory type, just use the extreme ends of the memory space.
-			if (scalar @{$data_files{$mem_type}{"Common"}} == 0) {
-				my $read_size = $read_size_max;
+			if (not exists $data_files{$mem_type}{"Common"}) {
+			my $read_size = $read_size_max;
 				$size = $memory_types{$mem_type}{$banks[0]};
 
 				# If a bank is smaller than the default number of bytes to read, only read as many
@@ -680,7 +680,7 @@ sub Run_Click {
     } else {
         foreach my $mem_type (keys %memory_types) {
             # Skip this memory type if there is no associated data file.
-            next if (scalar @{$data_files{$mem_type}{"Common"}} == 0); # eq "";
+            next if (not exists $data_files{$mem_type}{"Common"});
             
             # Find the middle of the total size.
             my $total_size = 0;
@@ -955,7 +955,7 @@ sub Run_Click {
         
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
-                next if (scalar @{$data_files{$mem_type}{"Common"}} == 0);
+                next if (not exists $data_files{$mem_type}{"Common"});
                 
                 # Modify a byte at each of the top, middle, and bottom.
                 foreach my $region (keys %{$addresses{$mem_type}}) {    
@@ -1034,7 +1034,7 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Read after programming");
             foreach my $mem_type (keys %memory_types) {
                 # Skip this memory type if there is no associated data file.
-                next if (scalar @{$data_files{$mem_type}{"Common"}} == 0);
+                next if (not exists $data_files{$mem_type}{"Common"});
 			
 				my %read_errors = ();	
 				
@@ -1118,7 +1118,7 @@ sub Run_Click {
 			Cleanup() if $cancel_clicked;
 			return 1 if $cancel_clicked;
 			print $to_log_file $misp_output;
-			$log_text->Append("\tFull sequence trial $run: $test_result[0]\r\n");
+			$log_text->Append("\tFull sequence trial $run: $test_result[0]");
 			if ($test_result[0] eq "FAILED") {
 				$log_text->Append("\r\n");
 				print $to_errors "ERROR: Full sequence trial $run failed.\r\n";
