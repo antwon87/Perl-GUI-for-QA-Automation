@@ -23,8 +23,6 @@ use Config::IniFiles;
 # PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
 # Doesn't work very well... or at all
 
-# TO DO: Add support for parts with alignment 2 (word-addressed).
-
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
 #		 Win32::Process may be good for this, too.
@@ -1085,11 +1083,7 @@ sub Run_Click {
 						# The physical address will be the byte address divided by two, and only have 1 physical for every other byte.
 						my @physical_addresses = map {$_ % 2 == 0 ? $addresses{$mem_type}{$region}{"addr"}[$_] / 2 : ()} (0 .. $#{$addresses{$mem_type}{$region}{"addr"}});
 						$range = sprintf("%#x-%#x %s", $physical_addresses[0], $physical_addresses[-1], $mem_type);
-						print "Phys Addr: @physical_addresses\n";
-						print "Outer: $physical_addresses[0], $physical_addresses[-1]\n";
-						print "Phys Size: " . scalar @physical_addresses . "\n";
-					}	
-					print "Range is $range\n";
+					}
 					
 					RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
 					print $to_log_file $misp_output;
