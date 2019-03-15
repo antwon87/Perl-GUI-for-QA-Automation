@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-# use lib '\\\csdc\Shared\FIXTURES\Perl_libs\ActivePerl_5.24';
+use lib '\\\csdc\Shared\FIXTURES\Perl_libs\ActivePerl_5.24';
 
 use 5.010;
 use XML::Twig;
@@ -70,6 +70,7 @@ my $max_port = 1;
 my $numPCBs = 1;
 my $log_file = "Better.log";
 my $default_datafile_dir = "C:\\CheckSum\\MISP\\Fixture USBDrive\\";
+my %alignment = ();
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
 # I'll open this in the Run Button event section.
@@ -153,7 +154,7 @@ my $read_bytes = $main->AddTextfield(-name => 'Bytes',
                                      -top => $config_label->Top() + $config_label->Height() + $body_above,
                                      -left => $body_margin,
                                      -prompt => [ 'Bytes per read: ', 80 ],
-                                     -text => '4',
+                                     -text => '1',
                                      -align => 'center');
                             
 my $read_updown = $main->AddUpDown(-autobuddy => 0,
@@ -165,8 +166,8 @@ $read_updown->Range(1, 32);
 my $endian = $main ->AddCheckbox(-text => 'Reverse endianness',
                                  -top => $read_bytes->Top(),
                                  -left => $read_updown->Left() + $read_updown->Width() + 25,
-                                 -disabled => 1,
-								 -checked => 1
+                                 -disabled => 1#,
+								 # -checked => 1
 								 );
 
 my $full_runs = $main->AddTextfield(-name => 'FullRuns',
@@ -529,7 +530,8 @@ sub Run_Click {
                                                  Bank => \&AddBanks,
                                                  DataFile => \&AddDataFiles,
 												 logfile => \&SetLogFile,
-												 dev => \&PortCount } );
+												 dev => \&PortCount,
+												 alignment => \&SetAlignment } );
 
     $twig->parsefile($xml_trimmed);
     my $root = $twig->root;
@@ -572,14 +574,17 @@ sub Run_Click {
         foreach my $mem_type (keys %memory_types) {
             # Find the bank with the lowest and the bank with the highest addresses
 			my @banks = sort keys %{$memory_types{$mem_type}};
-            my $read_size = $read_size_max;
-            my $size = 0;
+			
+			# Read twice as many bytes if the alignment is 2, so that you are reading the specified number of words.
+			# This is, of course, assuming that all word-addressed parts have 16-bit words, which I doubt, but people tell me it's true.
+			my $read_size = ($alignment{$mem_type} == 1) ? $read_size_max : $read_size_max * 2;
+			my $size = 0;
             # my ($min_bank, $max_bank) = minmax keys %{$memory_types{$mem_type}};
 			
 			# If there is no data file associated with this memory type, just use the extreme ends of the memory space.
 			if (not exists $data_files{$mem_type}{"Common"}) {
-			my $read_size = $read_size_max;
 				$size = $memory_types{$mem_type}{$banks[0]};
+				print "in here\n";
 
 				# If a bank is smaller than the default number of bytes to read, only read as many
 				#   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
@@ -595,20 +600,21 @@ sub Run_Click {
 				next if ($read_once{$mem_type});
 
 				# Reset variables
-				$read_size = $read_size_max;
+				$read_size = ($alignment{$mem_type} == 1) ? $read_size_max : $read_size_max * 2;
 				$size = $memory_types{$mem_type}{$banks[-1]};
 				$read_size = $size if ($size < $read_size);
 				
 				# Set up hash containing addresses to read at the bottom of the memory type.
 				$addresses{$mem_type}{"bottom"}{"addr"} = [$banks[-1] + $size - $read_size .. $banks[-1] + $size - 1];
 			} else {
-			
 				# Search through all known data files to find which contains the lowest address.
 				# Right now, this just looks for a file that has the lowest address, but not the whole range to be read.
 				# Iterates through all addresses in all banks starting at the lowest.
 				TOP_SEARCH: for my $bank (@banks) {
 					$size = $memory_types{$mem_type}{$bank};
 					for my $addr ($bank .. $bank + $size - 1) {
+						# If alignment 2, change from physical bank address to byte address.
+						$addr *= 2 if $alignment{$mem_type} == 2;
 						for my $file (@{$data_files{$mem_type}{"Common"}}) {
 							if (IsAddrInFile($addr, $file, $mem_type)) {
 								$addresses{$mem_type}{"top"}{"file"} = $file;
@@ -637,8 +643,8 @@ sub Run_Click {
 				# Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
 				next if ($read_once{$mem_type});
 
-				$read_size = $read_size_max;
-
+				$read_size = ($alignment{$mem_type} == 1) ? $read_size_max : $read_size_max * 2;
+			
 				# DEPRECATED
 				# Set up hash containing addresses to read at the bottom of the memory type.
 				# $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
@@ -649,6 +655,8 @@ sub Run_Click {
 				BOT_SEARCH: for my $bank (reverse @banks) {
 					$size = $memory_types{$mem_type}{$bank};
 					for my $addr (reverse $bank .. $bank + $size - 1) {
+						# If alignment 2, change from physical bank address to byte address.
+						$addr = ($addr * 2) + 1 if $alignment{$mem_type} == 2;
 						for my $file (@{$data_files{$mem_type}{"Common"}}) {
 							if (IsAddrInFile($addr, $file, $mem_type)) {
 								$addresses{$mem_type}{"bottom"}{"file"} = $file;
@@ -669,7 +677,6 @@ sub Run_Click {
         }
     }
 	
-
     # If there is a verify command, set up a middle address to modify.
     if (not exists $commands{"-v"}) {
         if (not exists $missing_commands{"-v"}) {
@@ -847,10 +854,19 @@ sub Run_Click {
 			print $to_log_file FormatHeader("Reads after erase");
             foreach my $mem_type (keys %memory_types) {
 				my %read_errors = ();
+				my $read_totally_failed = 0;
 				foreach my $region ("top", "bottom") {
 					
-					# Make a string containing the range of addresses to read and the memory type to read from
-					my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{$region}{"addr"}[0], $addresses{$mem_type}{$region}{"addr"}[-1], $mem_type); 
+					# Make a string containing the range of addresses to read and the memory type to read from.
+					# If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
+					my $range = "";
+					if ($alignment{$mem_type} == 1) {
+						$range = sprintf("%#x-%#x %s", $addresses{$mem_type}{$region}{"addr"}[0], $addresses{$mem_type}{$region}{"addr"}[-1], $mem_type); 
+					} else {
+						# The physical address will be the byte address divided by two, and only have 1 physical for every other byte.
+						my @physical_addresses = map {$_ % 2 == 0 ? $addresses{$mem_type}{$region}{"addr"}[$_] / 2 : ()} (0 .. $#{$addresses{$mem_type}{$region}{"addr"}});
+						$range = sprintf("%#x-%#x %s", $physical_addresses[0], $physical_addresses[-1], $mem_type);
+					}
 					RunMISP("--read", $xml_out, $range);  # Read from the memory region
 					Cleanup() if $cancel_clicked;
 					return 1 if $cancel_clicked;
@@ -861,7 +877,25 @@ sub Run_Click {
 					
 					if (scalar @data == 0) {
 						print $to_errors "ERROR: No data was able to be read from the $region of the part.\r\n";
+						$read_totally_failed = 1;
 						$error_count++;
+					}
+					
+					# If the alignment is 1, but the blank data was entered sloppily in the XML, it may need some massaging.
+					# I'm going to hope that alignment 2 parts never have sloppy blank data.
+					if ($alignment{$mem_type} == 1) {
+						# Adjust the blank data to have the same number of bytes as are output when reading an address.
+						# $len_dif is the length difference in characters.
+									# 2 chars per byte + 2 for 0x
+						my $len_dif = ($bytes_per_read * 2 + 2) - (length $blank_data{$mem_type});
+						if ($len_dif > 0) {
+							# Duplicate blank data until the string is the right length.
+							# This will likely be problematic if the blank data is not an integer number of bytes, but I'm going to hope that never happens.
+							$blank_data{$mem_type} .= substr($blank_data{$mem_type}, 2, 2) x ($len_dif / 2);
+						} elsif ($len_dif < 0) {
+							# Crop off the end of the blank data string
+							$blank_data{$mem_type} = substr($blank_data{$mem_type}, 0, (length $blank_data{$mem_type}) + $len_dif);
+						}
 					}
 
 					# Check to make sure the array only contains correct data.
@@ -874,7 +908,9 @@ sub Run_Click {
 				}
 			
 				# Display read errors if any occurred.
-                if (scalar (keys %read_errors)) {
+				if ($read_totally_failed) {
+					$log_text->Append("\tRead blank data ($mem_type): FAILED\r\n");
+                } elsif (scalar (keys %read_errors)) {
                     $log_text->Append("\tRead blank data ($mem_type): FAILED\r\n");
                     print $to_errors "ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                     "    Data read was $read_errors{$_}.\r\n" foreach (sort keys %read_errors);
@@ -1037,10 +1073,24 @@ sub Run_Click {
                 next if (not exists $data_files{$mem_type}{"Common"});
 			
 				my %read_errors = ();	
+				my $read_totally_failed = 0;
 				
 				foreach my $region ("top", "bottom") {
-					# Make a string containing the range of addresses to read and the memory type to read from
-					my $range = sprintf("%#x-%#x %s", $addresses{$mem_type}{$region}{"addr"}[0], $addresses{$mem_type}{$region}{"addr"}[-1], $mem_type); 
+					# Make a string containing the range of addresses to read and the memory type to read from.
+					# If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
+					my $range = "";
+					if ($alignment{$mem_type} == 1) {
+						$range = sprintf("%#x-%#x %s", $addresses{$mem_type}{$region}{"addr"}[0], $addresses{$mem_type}{$region}{"addr"}[-1], $mem_type); 
+					} else {
+						# The physical address will be the byte address divided by two, and only have 1 physical for every other byte.
+						my @physical_addresses = map {$_ % 2 == 0 ? $addresses{$mem_type}{$region}{"addr"}[$_] / 2 : ()} (0 .. $#{$addresses{$mem_type}{$region}{"addr"}});
+						$range = sprintf("%#x-%#x %s", $physical_addresses[0], $physical_addresses[-1], $mem_type);
+						print "Phys Addr: @physical_addresses\n";
+						print "Outer: $physical_addresses[0], $physical_addresses[-1]\n";
+						print "Phys Size: " . scalar @physical_addresses . "\n";
+					}	
+					print "Range is $range\n";
+					
 					RunMISP("--read", $xml_out, $range);  # Read from the top of the memory
 					print $to_log_file $misp_output;
 					Cleanup() if $cancel_clicked;
@@ -1051,23 +1101,38 @@ sub Run_Click {
 					
 					if (scalar @data == 0) {
 						print $to_errors "ERROR: No data was able to be read from the $region of the part.\r\n";
+						$read_totally_failed = 1;
 						$error_count++;
 					}
 					
 					# Read the addresses from the data file. Arguments are the data file, the starting address, and the length of the address array.
 					my @good_data = @{ReadDataFile($addresses{$mem_type}{$region}{"file"}, $mem_type, $addresses{$mem_type}{$region}{"addr"}[0], scalar @{$addresses{$mem_type}{$region}{"addr"}})};
+					if ($alignment{$mem_type} == 2) {
+						# If alignment is 2, shift data about to make word strings that will match the MISP output.
+						if ($reverse_endian) {  # I'm assuming "reverse endian" is big endian. It's poorly named, but deal with it.
+							my @index = map {$_ * 2} (0 .. ($#{$addresses{$mem_type}{$region}{"addr"}} - 1) / 2);  # Set up array with all even indices in the address array.
+							@good_data = map {sprintf("0x%02x%02x", hex $good_data[$_], hex $good_data[$_ + 1])} @index;
+
+						} else {  # Little endian.
+							my @index = map {$_ * 2 + 1} (0 .. ($#{$addresses{$mem_type}{$region}{"addr"}} - 1) / 2);  # Set up array with all odd indices in the address array.
+							@good_data = map {sprintf("0x%02x%02x", hex $good_data[$_], hex $good_data[$_ - 1])} @index;
+						}
+					}
 					
 					if ($good_data[0] eq "ERROR") {
 						print $to_errors "ERROR: Unable to read from data file '$addresses{$mem_type}{$region}{\"file\"}' for read test.\r\n";
 						next;
 					}
 
-					# Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
-					foreach my $i (0 .. $#data) {
-						$data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
-						my $offset = ($i % $bytes_per_read) * 2;
-						$offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
-						$data[$i] = substr($data[$i], $offset, 2);
+					# If the alignment is 1 and the algorithm author was lazy, mask bytes as needed.
+					if ($alignment{$mem_type} == 1 && $bytes_per_read > 1) {
+						# Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
+						foreach my $i (0 .. $#data) {
+							$data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
+							my $offset = ($i % $bytes_per_read) * 2;
+							$offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
+							$data[$i] = substr($data[$i], $offset, 2);
+						}
 					}
 					
 					# printf("%d %d\r\n", hex $data[$_], hex $good_data[$_]) foreach (0 .. $#data);
@@ -1085,7 +1150,9 @@ sub Run_Click {
 				}
 				                
                 # Display read errors if any occurred.
-                if (scalar (keys %read_errors)) {
+                if ($read_totally_failed) {
+					$log_text->Append("\tRead programmed data ($mem_type): FAILED\r\n");
+				} elsif (scalar (keys %read_errors)) {
                     $log_text->Append("\tRead programmed data ($mem_type): FAILED\r\n");
                     print $to_errors "ERROR: Read data did not match data file at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
                         "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
@@ -1632,18 +1699,6 @@ sub BlankData {
     my ( $twig, $elt ) = @_;
     my $mem_type = $elt->parent()->att("Type");
     $blank_data{$mem_type} = $elt->text();
-    
-    # Adjust the blank data to have the same number of bytes as are output when reading an address.
-    # $len_dif is the length difference in characters.
-                # 2 chars per byte + 2 for 0x
-    my $len_dif = ($bytes_per_read * 2 + 2) - (length $blank_data{$mem_type});
-    if ($len_dif > 0) {
-        # Append first blank data digit until length matches
-        $blank_data{$mem_type} .= substr($blank_data{$mem_type}, 2, 1) x $len_dif;
-    } elsif ($len_dif < 0) {
-        # Crop off the end of the blank data string
-        $blank_data{$mem_type} = substr($blank_data{$mem_type}, 0, (length $blank_data{$mem_type}) + $len_dif);
-    }
 }
 
 # Handler that will set up %memory_types with all existing memory types and banks.
@@ -1706,4 +1761,12 @@ sub PortCount {
 	my ($twig, $elt) = @_;
 	$max_port = $elt->first_child("portconnection")->text() if $elt->first_child("portconnection")->text() > $max_port;
 	$numPCBs = $elt->first_child("PCB")->text() if $elt->first_child("PCB")->text() > $numPCBs;
+}
+
+# Handler to set the alignment for each memory type.
+# Arg1: $twig - reference to twig object
+# Arg2: $elt - reference to twig element with name of "dev"
+sub SetAlignment {
+	my ($twig, $elt) = @_;
+	$alignment{$elt->parent()->att("Type")} = $elt->text();
 }
