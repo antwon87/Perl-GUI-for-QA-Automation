@@ -67,7 +67,9 @@ my @missing_addr = ();
 my $max_port = 1;
 my $numPCBs = 1;
 my $log_file = "Better.log";
+my $datafile_dir = "C:\\CheckSum\\MISP\\Fixture USBDrive\\";
 my $default_datafile_dir = "C:\\CheckSum\\MISP\\Fixture USBDrive\\";
+my $pps_datafile_dir = "C:\\CheckSum\\PPS\\Fixture USBDrive\\";
 my %alignment = ();
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
@@ -193,6 +195,10 @@ my $even_odd_check = $main->AddCheckbox(-text => 'Evens/Odds test',
 my $append_check = $main->AddCheckbox(-text => 'Append to log',
 									  -top => $full_runs->Top() + $full_runs->Height() + $body_above,
 									  -left => $body_margin);
+									  
+my $pps_check = $main->AddCheckbox(-text => 'PPS',
+								   -top => $append_check->Top(),
+								   -left => $even_odd_check->Left());
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
 							-top => $append_check->Top() + $append_check->Height() + $header_above,
@@ -431,6 +437,7 @@ sub Run_Click {
 	my $append = $append_check->Checked();
 	$max_port = 1;
 	my $num_MWs = 1;
+	$datafile_dir = $pps_check->Checked() ? $pps_datafile_dir : $default_datafile_dir;
 	$cancel_clicked = 0;
 	@missing_addr = ();
     $error_log = "";
@@ -571,7 +578,7 @@ sub Run_Click {
     } else {
         foreach my $mem_type (keys %memory_types) {
             # Find the bank with the lowest and the bank with the highest addresses
-			my @banks = sort keys %{$memory_types{$mem_type}};
+			my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
 			
 			# Read twice as many bytes if the alignment is 2, so that you are reading the specified number of words.
 			# This is, of course, assuming that all word-addressed parts have 16-bit words, which I doubt, but people tell me it's true.
@@ -582,7 +589,6 @@ sub Run_Click {
 			# If there is no data file associated with this memory type, just use the extreme ends of the memory space.
 			if (not exists $data_files{$mem_type}{"Common"}) {
 				$size = $memory_types{$mem_type}{$banks[0]};
-				print "in here\n";
 
 				# If a bank is smaller than the default number of bytes to read, only read as many
 				#   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
@@ -715,7 +721,7 @@ sub Run_Click {
 			# Now... find the nearest address that is actually in a data file.
 			# I think this would be cool if it could search for the closest real address in either direction,
 			# but I'm just going to look for the next closest higher address for now.
-			MID_SEARCH: for my $bank (sort keys %{$memory_types{$mem_type}}) {
+			MID_SEARCH: for my $bank (sort { $a <=> $b } keys %{$memory_types{$mem_type}}) {
 				my $size = $memory_types{$mem_type}{$bank};  # Skip banks until finding the one with mid in it.
 			    next if $bank + $size - 1 < $mid_addr;
 				for my $addr ($bank .. $bank + $size - 1) {
@@ -854,6 +860,7 @@ sub Run_Click {
 				my %read_errors = ();
 				my $read_totally_failed = 0;
 				foreach my $region ("top", "bottom") {
+					print $to_log_file "----------\nRead $region\n----------\n";
 					
 					# Make a string containing the range of addresses to read and the memory type to read from.
 					# If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
@@ -911,7 +918,7 @@ sub Run_Click {
                 } elsif (scalar (keys %read_errors)) {
                     $log_text->Append("\tRead blank data ($mem_type): FAILED\r\n");
                     print $to_errors "ERROR: Blank data read failed at address " . sprintf("%#x", $_) . " of $mem_type.\r\n" . 
-                    "    Data read was $read_errors{$_}.\r\n" foreach (sort keys %read_errors);
+                    "    Data read was $read_errors{$_}.\r\n" foreach (sort { $a <=> $b } keys %read_errors);
 					$error_count += scalar keys %read_errors;
                 } else {
                     $log_text->Append("\tRead blank data ($mem_type): PASSED\r\n");
@@ -1002,7 +1009,7 @@ sub Run_Click {
 					while (defined $elt) { # && $elt->first_child("RecentFilePath")->text() ne $addresses{$mem_type}{$region}{"file"}) {
 						my $xml_file = $elt->first_child("RecentFilePath")->text();
 						# Tack on the full path if the XML has a relative path, to match what I've stored in %addresses.
-						$xml_file = $default_datafile_dir . substr($xml_file, 2) if (substr($xml_file, 0, 1) eq ".");
+						$xml_file = $datafile_dir . substr($xml_file, 2) if (substr($xml_file, 0, 1) eq ".");
 						last if $xml_file eq $addresses{$mem_type}{$region}{"file"};
 						$elt = $elt->next_sibling("DataFile");
 					}
@@ -1074,6 +1081,8 @@ sub Run_Click {
 				my $read_totally_failed = 0;
 				
 				foreach my $region ("top", "bottom") {
+					print $to_log_file "----------\nRead $region\n----------\n";
+				
 					# Make a string containing the range of addresses to read and the memory type to read from.
 					# If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
 					my $range = "";
@@ -1180,7 +1189,7 @@ sub Run_Click {
 			return 1 if $cancel_clicked;
 			print $to_log_file $misp_output;
 			$log_text->Append("\tFull sequence trial $run: $test_result[0]");
-			if ($test_result[0] eq "FAILED") {
+			if ($test_result[0] ne "PASSED") {
 				$log_text->Append("\r\n");
 				print $to_errors "ERROR: Full sequence trial $run failed.\r\n";
 				$error_count++;
@@ -1236,12 +1245,13 @@ sub Run_Click {
 
     #----------------------#
 	
-	if (not -f 'C:\CheckSum\MISP\Fixture USBDrive\Bin\csMISPV3.ini') {
+	my $ini_path = $datafile_dir . 'Bin\csMISPV3.ini';
+	if (not -f $ini_path) {
         print $to_errors "ERROR: csMISPV3.ini not found.";
 		$error_count++;
     } else {
 		$log_text->Append("\r\nChecking files...\r\n");
-		my $cfg = Config::IniFiles->new( -file => 'C:\CheckSum\MISP\Fixture USBDrive\Bin\csMISPV3.ini' );
+		my $cfg = Config::IniFiles->new( -file => $ini_path );
 		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock = " . $cfg->val('system', 'fpgaClock') .
 			". The default is 180.\r\n" if $cfg->val('system', 'fpgaClock') != 180;
 		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock2 = " . $cfg->val('system', 'fpgaClock2') .
@@ -1351,8 +1361,8 @@ sub Cancel_Click {
 # Arg3: $options - Optional arguments associated with $command, such as an address to read.
 # Returns: A list containing "PASSED" or "FAILED" at element 0 and the test time at element 1.
 sub RunMISP {
-    if (not -f "C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe") {
-        die "C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe not found. How did you even manage to lose that?\n";
+    if (not -f $datafile_dir . "Bin\\csMISPV3.exe") {
+        die $datafile_dir . "Bin\\csMISPV3.exe not found. How did you even manage to lose that?\n";
     }
 
     my $command = shift;
@@ -1370,7 +1380,8 @@ sub RunMISP {
 	} else {
         # Perform MISP step
 		# print $to_errors "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
-		my $call_string = "\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options";
+		# my $call_string = "\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options";
+		my $call_string = '"' . $datafile_dir . "Bin\\csMISPV3.exe\" -c $xml $command $options";
 		
 		my $misp_pid = open my $misp_pipe, '-|', $call_string or die "ERROR: Couldn't open pipe to csMISPV3.exe: $!";
 		
@@ -1717,7 +1728,7 @@ sub AddDataFiles {
 		
 		# Give the file a full path if it has a relative path in the xml.
 		if (substr($file, 0, 1) eq ".") {
-			$file = $default_datafile_dir . substr($file, 2);
+			$file = $datafile_dir . substr($file, 2);
 		} else {
 			print $to_warnings "WARNING: $file not referenced using relative path.\r\n";
 		}
