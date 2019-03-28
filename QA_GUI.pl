@@ -274,8 +274,12 @@ my $log_text = $log_window->AddTextfield(-name => 'LogText',
                                          -multiline => 1,
                                          -vscroll => 1);
 										 
- my $cancel_button = $log_window->AddButton(-name => 'Cancel',
-											-text => 'Cancel');
+my $cancel_button = $log_window->AddButton(-name => 'Cancel',
+										   -text => 'Cancel Operation');
+											
+my $close_button = $log_window->AddButton(-name => 'Close_Results',
+										  -text => 'Close',
+										  -width => $cancel_button->Width());
 
 # my $log_file_field = $main->AddTextfield(-left => 20,
                                          # -prompt => ['Output to file:', 60],
@@ -1324,10 +1328,14 @@ sub Main_Resize {
 
 sub Log_Resize {
     $log_text->Change(-height => $log_window->ScaleHeight() - 10 - $cancel_button->Height() - 10, #-height => $log_window->ScaleHeight() - 10,
-                      -width => $log_window->ScaleWidth() - 10);
+                      -width => $log_window->ScaleWidth() - 10,
+					  -left => 5);
 					  
 	$cancel_button->Change(-top => $log_text->Top() + $log_text->Height() + 10,
-						   -left => 20);
+						   -left => $body_margin);
+						   
+	$close_button->Change(-top => $cancel_button->Top(),
+						  -left => $log_window->ScaleWidth() - $close_button->Width() - $body_margin);
     return 1;
 }
 
@@ -1347,6 +1355,10 @@ sub Cancel_Click {
 	$cancel_clicked = 1;
 	
 	return 1;
+}
+
+sub Close_Results_Click {
+	$log_window->Hide();
 }
 
 #####################
