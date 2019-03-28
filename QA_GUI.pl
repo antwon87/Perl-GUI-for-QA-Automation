@@ -906,7 +906,7 @@ sub Run_Click {
 							$blank_data{$mem_type} = substr($blank_data{$mem_type}, 0, (length $blank_data{$mem_type}) + $len_dif);
 						}
 					}
-
+					
 					# Check to make sure the array only contains correct data.
 					foreach my $i (0 .. $#data) {
 						$read_errors{$addresses{$mem_type}{$region}{"addr"}[$i]} = $data[$i] if hex $data[$i] != hex $blank_data{$mem_type};
@@ -1716,6 +1716,7 @@ sub BlankData {
     my ( $twig, $elt ) = @_;
     my $mem_type = $elt->parent()->att("Type");
     $blank_data{$mem_type} = $elt->text();
+	$blank_data{$mem_type} =~ s/\s+//g;  # Remove any spaces that may foul up the data.
 }
 
 # Handler that will set up %memory_types with all existing memory types and banks.
@@ -1760,7 +1761,7 @@ sub AddDataFiles {
     }
     
     ### TO DO: Maybe add support for multiple common data files and device specific files. 
-	###		   Done in this part, but implementation in other parts of code is not complete.
+	###		   Done in this part, but implementation of device specific check in other parts of code is not complete.
 }
 
 # Handler that will set the log file to be output in the QA directory.
