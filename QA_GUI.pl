@@ -23,14 +23,17 @@ use Config::IniFiles;
 # PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
 # Doesn't work very well... or at all
 
+# TO DO: Could change the way the script searches for a middle address to use in the modified verify test. Instead of looking for the middle of the part's whole address space,
+#		   use the established top and bottom addresses as bounds and find halfway between them.
+
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
 #		 Win32::Process may be good for this, too.
 #		 Actually, open() will allow it to run in the background. That might be good enough.
 
 # Hide the DOS window that shows up when you start by double clicking.
-# my $DOS = Win32::GUI::GetPerlWindow();
-# Win32::GUI::Hide($DOS);
+my $DOS = Win32::GUI::GetPerlWindow();
+Win32::GUI::Hide($DOS);
 
 # TO DO: For tests that pass with a FAILED result, make sure that the test was actually run.
 #		 Don't allow a FAILED result due to something like failure to read the data file get through as 
@@ -1229,7 +1232,7 @@ sub Run_Click {
 			
 			# Generate odd mask and run test
 			$pcb_mask = "";
-			$pcb_mask = (($_ + 1) % 2) . $pcb_mask for (1 .. $numPCBs);
+			$pcb_mask = ($_ % 2) . $pcb_mask for (1 .. $numPCBs);
 			$pcb_mask = sprintf("%#x", oct("0b$pcb_mask"));
 			@test_result = RunMISP($full_sequence, $xml_out, "-s $pcb_mask");
 			Cleanup() if $cancel_clicked;
