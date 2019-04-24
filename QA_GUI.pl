@@ -8,7 +8,7 @@ use XML::Twig;
 use File::Basename;
 use File::Path qw( make_path );
 use List::Util qw ( min first );
-use List::MoreUtils qw( minmax );
+use List::MoreUtils qw( minmax uniq );
 use Hex::Record;
 # use Cwd qw( getcwd abs_path);
 use Win32::GUI();
@@ -48,7 +48,7 @@ Win32::GUI::Hide($DOS);
 
 #####################
 
-my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord", ".mot" );
+my @supported_types = ( ".bin", ".hex", ".s19", ".s29", ".s37", ".srec", ".srecord", ".mot", ".mhx" );
 my %commands = ();
 my %missing_commands = ();
 my $misp_output = "";
@@ -1207,6 +1207,7 @@ sub Run_Click {
 		
 		# Report any warnings from the misp output.
 		my @warnings = $misp_output =~ m/Warning:\s*(.*)/g;
+		@warnings = uniq(@warnings);
 		if (scalar @warnings) {
 			print $to_errors "\r\nMISP warnings:\r\n";
 			print $to_errors "\t$_\r\n" foreach (@warnings);
@@ -1462,7 +1463,7 @@ sub RunMISP {
         if ($extension eq ".hex") {
             $open_files{$file}{"type"} = "hex";
         } elsif ($extension eq ".s19" || $extension eq ".s28" || $extension eq ".s37" ||
-                 $extension eq ".srec" || $extension eq ".srecord" || $extension eq ".mot") {
+                 $extension eq ".srec" || $extension eq ".srecord" || $extension eq ".mot" || $extension eq ".mhx") {
             $open_files{$file}{"type"} = "srec";
         } elsif ($extension eq ".bin") {
             $open_files{$file}{"type"} = "bin";
