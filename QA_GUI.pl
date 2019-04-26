@@ -23,17 +23,14 @@ use Config::IniFiles;
 # PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
 # Doesn't work very well... or at all
 
-# TO DO: Could change the way the script searches for a middle address to use in the modified verify test. Instead of looking for the middle of the part's whole address space,
-#		   use the established top and bottom addresses as bounds and find halfway between them.
-
 # TO DO: Try using IPC::Run module to run the MISP process in the background and with a timeout.
 #		 Could also set up a cancel button in the log window.
 #		 Win32::Process may be good for this, too.
 #		 Actually, open() will allow it to run in the background. That might be good enough.
 
 # Hide the DOS window that shows up when you start by double clicking.
-my $DOS = Win32::GUI::GetPerlWindow();
-Win32::GUI::Hide($DOS);
+# my $DOS = Win32::GUI::GetPerlWindow();
+# Win32::GUI::Hide($DOS);
 
 # TO DO: For tests that pass with a FAILED result, make sure that the test was actually run.
 #		 Don't allow a FAILED result due to something like failure to read the data file get through as 
@@ -652,7 +649,11 @@ sub Run_Click {
 				# $addresses{$mem_type}{"top"} = [$min_bank .. $min_bank + $read_size - 1];
 			
 				# Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
-				next if ($read_once{$mem_type});
+				# Also set the "bottom" address to the last in the top array. This will only be used when finding a middle address for verify.
+				if ($read_once{$mem_type}) {
+					$addresses{$mem_type}{"bottom"}[0] = $addresses{$mem_type}{"top"}[-1];
+					next;
+				}
 
 				$read_size = ($alignment{$mem_type} == 1) ? $read_size_max : $read_size_max * 2;
 			
@@ -697,38 +698,54 @@ sub Run_Click {
         }
     } else {
         foreach my $mem_type (keys %memory_types) {
-            # Skip this memory type if there is no associated data file.
-            next if (not exists $data_files{$mem_type}{"Common"});
-            
-            # Find the middle of the total size.
-            my $total_size = 0;
-            $total_size += $memory_types{$mem_type}{$_} foreach keys %{$memory_types{$mem_type}};
-            my $mid = int ($total_size / 2);
+			my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
+			
+            # Skip this memory type if there is no associated data file. Or if it is so small we are only doing one read.
+            next if ((not exists $data_files{$mem_type}{"Common"}) || ($read_once{$mem_type}));
 			
 			# Storage for the address in the middle of the memory space.
 			my $mid_addr = 0;
             
             # Iterate through banks to find what address will be the middle.
             my $count = 0;
-            foreach my $bank (keys %{$memory_types{$mem_type}}) {
-                $count += $memory_types{$mem_type}{$bank};  # Add bank size to $count.
-                if ($count >= $mid) {  # This bank contains the middle address.
-                    # I think this will be the middle address...
-                    # Start of bank + bank size = max bank address
-                    # Count - mid = how far before the max bank address the mid is
-                    # Max bank address - (count - mid) = middle address!
-                    # - 1 at the end because count and mid are 1-indexed, memory is not
-					$mid_addr = $bank + $memory_types{$mem_type}{$bank} - ($count - $mid) - 1;
-					# DEPRECATED below.
-                    # $addresses{$mem_type}{"mid"}[0] = $bank + $memory_types{$mem_type}{$bank} - ($count - $mid) - 1;
-                    last;
-                }
+            foreach my $bank (@banks) {
+				my $size = $memory_types{$mem_type}{$bank};
+				
+				# Move along if the "top" address is above this whole bank. We already know things below the "top" are not in the data files.
+				next if ($bank + $size - 1 < $addresses{$mem_type}{"top"}{"addr"}[0]);
+				# Stop looking if you've gone past the "bottom" address. We already know anything left is not in the data files.
+				last if ($bank > $addresses{$mem_type}{"bottom"}{"addr"}[-1]);
+				
+				# Loop through all addresses of this bank to find the number of addresses between the "top" and "bottom".
+				foreach my $addr ($bank .. $bank + $size - 1) {
+					# Increment $count if the current address is between the "top" and "bottom".
+					$count++ if (($addr >= $addresses{$mem_type}{"top"}{"addr"}[0]) && ($addr <= $addresses{$mem_type}{"bottom"}{"addr"}[-1]));
+				}
             }
+			
+			# $count now contains the number of addresses between the "top" and "bottom" addresses.
+			# Now I need to find the address in the middle of this.
+			$count = floor($count / 2);
+			MID_ADDR_SEARCH: foreach my $bank (@banks) {
+				my $size = $memory_types{$mem_type}{$bank};
+				
+				# Move along if the "top" address is above this whole bank.
+				next if ($bank + $size - 1 < $addresses{$mem_type}{"top"}{"addr"}[0]);
+				
+				# Loop through all addresses of this bank, decrementing $count for each address between "top" and "bottom".
+				foreach my $addr ($bank .. $bank + $size - 1) {
+					$count-- if (($addr >= $addresses{$mem_type}{"top"}{"addr"}[0]) && ($addr <= $addresses{$mem_type}{"bottom"}{"addr"}[-1]));
+					if ($count <= 0) {
+						$mid_addr = $addr;
+						last MID_ADDR_SEARCH;
+					}
+				}
+			}
 			
 			# Now... find the nearest address that is actually in a data file.
 			# I think this would be cool if it could search for the closest real address in either direction,
 			# but I'm just going to look for the next closest higher address for now.
-			MID_SEARCH: for my $bank (sort { $a <=> $b } keys %{$memory_types{$mem_type}}) {
+			MID_SEARCH: for my $bank (@banks) {
 				my $size = $memory_types{$mem_type}{$bank};  # Skip banks until finding the one with mid in it.
 			    next if $bank + $size - 1 < $mid_addr;
 				for my $addr ($bank .. $bank + $size - 1) {
@@ -866,7 +883,7 @@ sub Run_Click {
             foreach my $mem_type (keys %memory_types) {
 				my %read_errors = ();
 				my $read_totally_failed = 0;
-				foreach my $region ("top", "bottom") {
+				foreach my $region ("top", "bottom") {					
 					print $to_log_file "----------\nRead $region\n----------\n";
 					
 					# Make a string containing the range of addresses to read and the memory type to read from.
@@ -916,7 +933,7 @@ sub Run_Click {
 					}
 					
 					# Skip bottom read if it was covered by the top read.
-					last if exists $read_once{$mem_type};
+					last if $read_once{$mem_type};
 				}
 			
 				# Display read errors if any occurred.
@@ -1007,6 +1024,8 @@ sub Run_Click {
                 
                 # Modify a byte at each of the top, middle, and bottom.
                 foreach my $region (keys %{$addresses{$mem_type}}) {    
+					print $to_log_file "----------\nVerify $region\n----------\n";
+					
 					# Skip this region if there is no associated data file. I don't think this should ever happen
 					# due to the way that I search for a file in the MISP setup section.
 					next if not exists $addresses{$mem_type}{$region}{"file"};
