@@ -8,7 +8,7 @@ use XML::Twig;
 use File::Basename;
 use File::Path qw( make_path );
 use List::Util qw ( min first );
-use List::MoreUtils qw( minmax uniq );
+use List::MoreUtils qw( minmax uniq first_index );
 use Hex::Record;
 # use Cwd qw( getcwd abs_path);
 use Win32::GUI();
@@ -71,6 +71,7 @@ my $datafile_dir = "C:\\CheckSum\\MISP\\Fixture USBDrive\\";
 my $default_datafile_dir = "C:\\CheckSum\\MISP\\Fixture USBDrive\\";
 my $pps_datafile_dir = "C:\\CheckSum\\PPS\\Fixture USBDrive\\";
 my %alignment = ();
+my $firstUniquePCB = undef;  # First PCB with unique data. I don't know why this would ever not be 1, but let's account for it anyway.
 
 # Create a "file handle" to the log string. This will allow me to print to the string.
 # I'll open this in the Run Button event section.
@@ -452,6 +453,7 @@ sub Run_Click {
     %blank_data = ();
     %data_files = ();
     %commands = ();
+	$firstUniquePCB = undef;
     
     # Clear the log window for a new run. Maybe...
     $log_text->Change(-text => '');
@@ -624,7 +626,7 @@ sub Run_Click {
 						# If alignment 2, change from physical bank address to byte address.
 						$addr *= 2 if $alignment{$mem_type} == 2;
 						for my $file (@{$data_files{$mem_type}{"Common"}}) {
-							if (IsAddrInFile($addr, $file, $mem_type)) {
+							if (IsAddrInFile($addr, $file, $mem_type) == 1) {
 								$addresses{$mem_type}{"top"}{"file"} = $file;
 								# Don't overflow the bank if the start address is near its end.
 								$read_size = $bank + $size - $addr if $addr + $read_size > $bank + $size;
@@ -670,7 +672,7 @@ sub Run_Click {
 						# If alignment 2, change from physical bank address to byte address.
 						$addr = ($addr * 2) + 1 if $alignment{$mem_type} == 2;
 						for my $file (@{$data_files{$mem_type}{"Common"}}) {
-							if (IsAddrInFile($addr, $file, $mem_type)) {
+							if (IsAddrInFile($addr, $file, $mem_type) == 1) {
 								$addresses{$mem_type}{"bottom"}{"file"} = $file;
 								# Don't underflow the bank if the start address is near its beginning.
 								$read_size = $addr - $bank + 1 if $addr - $bank + 1 < $read_size;
@@ -751,7 +753,7 @@ sub Run_Click {
 				for my $addr ($bank .. $bank + $size - 1) {
 					next if $addr < $mid_addr;  # Skip addresses until reaching the mid address.
 					for my $file (@{$data_files{$mem_type}{"Common"}}) {
-						if (IsAddrInFile($addr, $file, $mem_type)) {
+						if (IsAddrInFile($addr, $file, $mem_type) == 1) {
 							$addresses{$mem_type}{"mid"}{"file"} = $file;
 							$addresses{$mem_type}{"mid"}{"addr"} = [$addr];
 							last MID_SEARCH;
@@ -1190,10 +1192,112 @@ sub Run_Click {
                     $log_text->Append("\tRead programmed data ($mem_type): PASSED\r\n");
                 }
             }
+        
+			### TO DO: Maybe try to add a check for unique data... In progress below. Only checking one device.
+			foreach my $mem_type (keys %memory_types) {
+				my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
+				my @read_ranges = ();  # Will hold array references. Internal arrays will be [ range_start_addr, range_end_addr ].
+			
+				# Do a device-specific data test if there were any device-specific data files enabled in the XML.
+				if (exists $data_files{$mem_type}{"Unique"}{$firstUniquePCB}) {
+					# Key is address, value is an array: [ data, bank ].
+					# Will store all addresses and corresponding data in and around device-specific regions.
+					my %good_data = ();  
+						
+					# Add all addresses and data in device-specific files to %goodData.
+					foreach my $file (@{$data_files{$mem_type}{"Unique"}}) {						
+						# Loop through all addresses on the part, trying to find which addresses are in the unique data file.
+						foreach my $bank (@banks) {
+							foreach $addr ($bank .. $bank + $memory_types{$mem_type}{$bank} - 1) {
+								my @data = @{ReadDataFile($file, $mem_type, $addr, 1)};
+								$good_data{$addr} = [ $data[0], $bank ] if ($data[0] ne "not found");
+							}
+						}						
+					}
+					
+					# %good_data now contains all addresses and data in all device-specific files for the first PCB.
+					my @unique_addrs = sort keys %good_data;
+					# my $last_addr = $unique_addrs[0];
+					foreach my $i (0 .. $#unique_addrs) {
+						# Move on if this address is in the middle of a continuous range.
+						# Only care about addresses which are not surrounded by other unique data.
+						if (($i > 0) && ($i < $#unique_addrs)) {
+							next if (($unique_addrs[$i] == ($unique_addrs[$i - 1] + 1)) && ($unique_addrs[$i] == ($unique_addrs[$i + 1] - 1)));
+						}
+						
+						my $start_of_range = 0;
+						my $end_of_range = 0;
+						
+						if ($i == 0) {
+							$start_of_range = 1;
+						} else if ($unique_addrs[$i] != ($unique_addrs[$i - 1] + 1)) {
+							$start_of_range = 1;
+						}
+						
+						if ($i == $#unique_addrs) {
+							$end_of_range = 1;
+						} else if ($unique_addrs[$i] != ($unique_addrs[$i + 1] - 1)) {
+							$end_of_range = 1;
+						}
+						
+						my $read_size = $read_size_max;
+						
+						# Find the relevant bank's index in the banks array.
+						my $idx = first_index {$_ == $good_data{$unique_addrs[$i]}[1]} @banks;
+						my $start_addr = undef;
+						
+						# First consider an address which is the start of a range.
+						if ($start_of_range) {
+							# TODO: Must consider if I am overlapping with other already-read areas.
+							# If the current address is at the start of the bank, search for a previous bank to read.
+							if ($unique_addrs[$i] == $banks[$idx]) {
+								next if ($idx == 0);  # If this is the very first address in the part, don't try to read addresses before it.
+								
+								# Only read the size of the previous bank if it is smaller than $read_size_max. Could go searching for more banks, but... this is good enough.
+								$read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size_max);
+								
+									#				    bank				bank size
+								$start_addr = $banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1] - $read_size;
+							} else {  # The address is the start of a range, but not the start of the bank.
+								# If there are fewer than $read_size addresses in the bank before this address, only read what is there.
+								$read_size = $unique_addrs[$i] - $banks[$idx] if (($unique_addrs[$i] - $banks[$idx]) < $read_size);
+								$start_addr = $unique_addrs[$i] - $read_size;							
+							}
+						}
+						
+						
+						# Loop through all commmon data files looking for the defined range.
+						foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
+							my @data = @{ReadDataFile($file, $mem_type, $start_addr, $read_size};
+							
+							# This should loop over $read_size number of addresses at the end of the bank.
+							foreach my $j (0 .. $#data) {
+								my $current_addr = $start_addr + $j
+								
+								# If nothing yet recorded at this address, save either read data or blank data.
+								if (not exists $good_data{$current_addr}) {
+									if ($data[$j] eq "not found") {
+										$good_data{$current_addr} = [ $blank_data{$mem_type}, $banks[$idx - 1] ];
+									} else {
+										$good_data{$current_addr} = [ $data[$j], $banks[$idx - 1] ];
+									}
+								} else if (($data[$j] ne "not found") && ($good_data{$current_addr}[0] eq $blank_data{$mem_type}) {
+									# If valid data was found in this file, use it instead of the blank data that may have been assigned if 
+									#   another file was checked first and nothing was found there.
+									$good_data{$current_addr}[0] = $data[$j];
+								}									
+							}
+						}
+							
+							
+							
+					}
+				}
+			}
+			### End of in-progress stuff
+			
+			
         }
-        
-        ### TO DO: Maybe try to add a check for unique data.
-        
     }
     
     #-------------------#
@@ -1780,6 +1884,7 @@ sub AddDataFiles {
 			my $dev = $elt->parent()->parent();
 			my $pcb = $dev->first_child("PCB")->text();
 			$data_files{$elt->att("Memory_Type")}{"Unique"}{$pcb} = $file;
+			$firstUniquePCB = $pcb if ((not defined $firstUniquePCB) || ($firstUniquePCB > $pcb));
 		}
     }
     
