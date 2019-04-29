@@ -1291,7 +1291,9 @@ sub Run_Click {
                             #   and the end address of the inner array will be updated when the end of this unique range is found.
                             push @read_ranges, [ $start_addr ] if ($read_ranges[-1][1] != $start_addr - 1);
                             
-						} else {  # This address is at the end of a unique range, scan addresses after it.
+						}
+                        
+                        if ($end_of_range) {  # This address is at the end of a unique range, scan addresses after it.
                             # If the current address is at the end of a bank, search for a later bank to read.
                             #                          bank start  +     bank size                          - 1 = bank end
                             if ($unique_addrs[$i] == ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1)) {
@@ -1311,6 +1313,8 @@ sub Run_Click {
                             # The inner array should already contain the start address for this range.
                             $read_ranges[-1][1] = $start_addr + $read_size - 1;
                         }
+                        
+                        # TODO: I don't know if this will work for a single-byte unique data, that is both the start and end of a range.
 						
 						# Loop through all commmon data files looking for the defined range.
 						foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
