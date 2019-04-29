@@ -1260,14 +1260,15 @@ sub Run_Click {
 						if ($start_of_range) {
 							# If the current address is at the start of the bank, search for a previous bank to read.
 							if ($unique_addrs[$i] == $banks[$idx]) {
-								next if ($idx == 0);  # If this is the very first address in the part, don't try to read addresses before it.
+								if ($idx != 0) {  # If this is the very first address in the part, don't try to read addresses before it.
 								
-								# Limit the read to the number of bytes in the previous bank if it is smaller than $read_size. 
-                                # Could go searching for more banks, but... this is good enough.
-								$read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size);
-								
-									#				    bank				bank size
-								$start_addr = $banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1]} - $read_size;
+                                    # Limit the read to the number of bytes in the previous bank if it is smaller than $read_size. 
+                                    # Could go searching for more banks, but... this is good enough.
+                                    $read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size);
+                                    
+                                        #				    bank				bank size
+                                    $start_addr = $banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1]} - $read_size;
+                                }
 							} else {  # The address is the start of a range, but not the start of the bank.
 								# If there are fewer than $read_size addresses in the bank before this address, only read what is there.
 								$read_size = $unique_addrs[$i] - $banks[$idx] if (($unique_addrs[$i] - $banks[$idx]) < $read_size);
@@ -1297,11 +1298,12 @@ sub Run_Click {
                             # If the current address is at the end of a bank, search for a later bank to read.
                             #                          bank start  +     bank size                          - 1 = bank end
                             if ($unique_addrs[$i] == ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1)) {
-                                next if ($idx == $#banks);  # If this is the very last address in the part, don't try to read addresses after it.
+                                if ($idx != $#banks) {  # If this is the very last address in the part, don't try to read addresses after it.
                                 
-                                # Limit the read to the number of bytes in the next bank if it is smaller than $read_size_max.
-                                $read_size = $memory_types{$mem_type}{$banks[$idx + 1]} if ($memory_types{$mem_type}{$banks[$idx + 1]} < $read_size_max);
-                                $start_addr = $banks[$idx + 1];
+                                    # Limit the read to the number of bytes in the next bank if it is smaller than $read_size_max.
+                                    $read_size = $memory_types{$mem_type}{$banks[$idx + 1]} if ($memory_types{$mem_type}{$banks[$idx + 1]} < $read_size_max);
+                                    $start_addr = $banks[$idx + 1];
+                                }
                             } else {  # The address is the end of a range, but not the end of a bank.
                                 # If there are fewer than $read_size addresses in the bank after this address, only read what is there.
                                 #             bank start  + bank size                              - 1 - this addr = read size
@@ -1315,6 +1317,7 @@ sub Run_Click {
                         }
                         
                         # TODO: I don't know if this will work for a single-byte unique data, that is both the start and end of a range.
+                        Need to move the below foreach into the end_of_range if statement and change @data to come from $read_ranges.
 						
 						# Loop through all commmon data files looking for the defined range.
 						foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
