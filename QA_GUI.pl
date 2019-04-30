@@ -212,9 +212,13 @@ my $append_check = $main->AddCheckbox(-text => 'Append to log',
 my $pps_check = $main->AddCheckbox(-text => 'PPS',
 								   -top => $append_check->Top(),
 								   -left => $even_odd_check->Left());
+								   
+my $unique_check = $main->AddCheckbox(-text => 'Read unique data from all PCBs',
+									  -top => $append_check->Top() + $append_check->Height() + $body_above,
+									  -left => $body_margin);
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
-							-top => $append_check->Top() + $append_check->Height() + $header_above,
+							-top => $unique_check->Top() + $unique_check->Height() + $header_above,
                             -left => $header_margin,
                             -font => $heading);
 
@@ -452,6 +456,7 @@ sub Run_Click {
 	my $full_num = $full_runs->Text();
 	my $even_odd = $even_odd_check->Checked();
 	my $append = $append_check->Checked();
+	my $unique_test_all = $unique_check->Checked();
 	$max_port = 1;
 	my $num_MWs = 1;
 	$datafile_dir = $pps_check->Checked() ? $pps_datafile_dir : $default_datafile_dir;
@@ -1211,7 +1216,8 @@ sub Run_Click {
             #----- Device-Specific-Data Test -----#
             
 			UNIQUE_DATA: foreach my $mem_type (keys %memory_types) {
-				foreach my $pcb_num (sort { $a <=> $b } keys %{$data_files{$mem_type}{"Unique"}}) {
+				my @pcbs_to_test = ($unique_test_all) ? ( sort { $a <=> $b } keys %{$data_files{$mem_type}{"Unique"}} ) : ( $firstUniquePCB );
+				foreach my $pcb_num (@pcbs_to_test) {
 					# Do a device-specific data test if there were any device-specific data files enabled in the XML.
 					if (exists $data_files{$mem_type}{"Unique"}{$pcb_num}) {
 						print $to_log_file FormatHeader("Read Device-specific Data");  
@@ -1291,8 +1297,11 @@ sub Run_Click {
 							if ($start_of_range) {
 								# If the current address is at the start of the bank, search for a previous bank to read.
 								if ($unique_addrs[$i] == $banks[$idx]) {
-									if ($idx != 0) {  # If this is the very first address in the part, don't try to read addresses before it.
-									
+									# If this is the very first address in the part, or this bank and the previous are not contiguous in memory, don't try to read addresses before this address.
+									if (($idx == 0) || ($banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1]} != $banks[$idx])) {
+										$start_addr = $unique_addrs[$i];  # In this case, just start reading at the start of the unique range.
+										$read_size = 0;
+									} else {  # Otherwise, read from the previous bank as well.
 										# Limit the read to the number of bytes in the previous bank if it is smaller than $read_size. 
 										# Could go searching for more banks, but... this is good enough.
 										$read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size);
@@ -1307,17 +1316,14 @@ sub Run_Click {
 								}
 								
 								# Adjust $start_addr if it and other addresses in the range have already been covered.
-								while ($read_size > 0) {
-									if (exists $good_data{$start_addr}) {
+								while (($read_size > 0) && (scalar @read_ranges != 0)) {
+									if (($start_addr <= $read_ranges[-1][1])) {
 										$read_size--;
 										$start_addr++;
 									} else {
 										last;
 									}
 								}
-								
-								# If read size goes all the way to 0, this whole range was covered by a previous range. Move on.
-								next if ($read_size == 0);
 								
 								# Add a new anonymous array to the end of @read_ranges. I think that a start address should always be encountered before an end address,
 								#   and that another start address won't be found before the end address of this range.
@@ -1329,10 +1335,14 @@ sub Run_Click {
 							
 							if ($end_of_range) {  # This address is at the end of a unique range, scan addresses after it.
 								# If the current address is at the end of a bank, search for a later bank to read.
-								#                          bank start  +     bank size                          - 1 = bank end
-								if ($unique_addrs[$i] == ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1)) {
-									if ($idx != $#banks) {  # If this is the very last address in the part, don't try to read addresses after it.
-									
+								#                    bank start  +     bank size                          - 1 = bank end
+								my $bank_end_addr = $banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1;
+								if ($unique_addrs[$i] == $bank_end_addr) {
+									# If this is the very last address in the part, or the next bank is not contiguous in memory, don't try to read addresses after this address.
+									if (($idx == $#banks) || ($bank_end_addr != $banks[$idx + 1] - 1)) {
+										$start_addr = $unique_addrs[$i] + 1;
+										$read_size = 0;
+									} else {  # Look for the end of the range in the next bank.									
 										# Limit the read to the number of bytes in the next bank if it is smaller than $read_size_max.
 										$read_size = $memory_types{$mem_type}{$banks[$idx + 1]} if ($memory_types{$mem_type}{$banks[$idx + 1]} < $read_size_max);
 										$start_addr = $banks[$idx + 1];
@@ -1344,6 +1354,17 @@ sub Run_Click {
 									$read_size = $banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - $start_addr if ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - $start_addr < $read_size_max);
 								}
 								
+								# Check for a new unique range starting within $read_size bytes of $start_addr.
+								# If there is one, end this range just before it.
+								if ($read_size > 1) {
+									foreach my $j (1 .. $read_size - 1) {
+										if (exists $good_data{$start_addr + $j}) {
+											$read_size = $j;
+											last;
+										}
+									}
+								}
+								
 								# Place the end of the region in the second element of the last array within @read_ranges.
 								# The inner array should already contain the start address for this range.
 								$read_ranges[-1][1] = $start_addr + $read_size - 1;
@@ -1352,7 +1373,7 @@ sub Run_Click {
 							
 						# All ranges are now defined, next read good data from the files, and then read the part.
 						foreach my $range_ref (@read_ranges) {
-							print $to_log_file "----------\nRead device-specific data at " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . "\n----------\n";
+							print $to_log_file "----------\nRead PCB$pcb_num device-specific data at " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . "\n----------\n";
 							
 							# Loop through all commmon data files looking for the defined range.
 							foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
@@ -2069,8 +2090,8 @@ sub AddDataFiles {
 		# print "Added $file to list\n" if ($elt->parent()->gi() eq "CommonData");
 		# print "@{$data_files{$elt->att(\"Memory_Type\")}{\"Common\"}}";
 		
-		# If a device-specific data file, add it to the unique hash (as value) along with its associated pcb number (as key).
-		if ($elt->parent()->gi() eq "DeviceData") {
+		# If a device-specific data file for an enabled device, add it to the unique hash (as value) along with its associated pcb number (as key).
+		if (($elt->parent()->gi() eq "DeviceData") && ($elt->parent()->parent()->first_child("Enable")->text() eq "Yes")) {
 			my $dev = $elt->parent()->parent();
 			my $pcb = $dev->first_child("PCB")->text();
 			push @{$data_files{$elt->att("Memory_Type")}{"Unique"}{$pcb}}, $file;
@@ -2097,6 +2118,9 @@ sub PortCount {
 	my ($twig, $elt) = @_;
 	$max_port = $elt->first_child("portconnection")->text() if $elt->first_child("portconnection")->text() > $max_port;
 	$numPCBs = $elt->first_child("PCB")->text() if $elt->first_child("PCB")->text() > $numPCBs;
+	
+	# Also check if all devices are enabled. Throw a warning if not.
+	print $to_warnings "WARNING: PCB\r\n" . $elt->first_child("PCB")->text() . " not enabled." if ($elt->first_child("Enable")->text() ne "Yes");
 }
 
 # Handler to set the alignment for each memory type.
