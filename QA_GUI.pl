@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-# use lib '\\\csdc\Shared\FIXTURES\Perl_libs\ActivePerl_5.24';
+use lib '\\\csdc\Shared\FIXTURES\Perl_libs\ActivePerl_5.24';
 
 use 5.010;
 use XML::Twig;
@@ -19,6 +19,18 @@ use Config::IniFiles;
 # NOTE: I had to modify Hex::Record.pm line 388. It wasn't counting the end-of-line CRC in the byte count that comes after the record type.
 #			Old line:     	my $byte_count = @$bytes_hex_ref + length($total_addr_hex) / 2;
 #			Modified line:	my $byte_count = @$bytes_hex_ref + length($total_addr_hex) / 2 + 1;
+#
+#		I also added a new function to the module called GetRegions(). I'll put the code here in case my version of the module is ever lost:
+			# sub GetRegions {
+				# my $self = shift;
+				# my @regions = ();
+				
+				# foreach my $part (@{$self->{parts}}) {
+					# push @regions, [ $part->{start}, scalar @{$part->{bytes}} ];
+				# }
+				
+				# return \@regions;
+			# }
 
 # PAR::Packer command line for compiling to exe: pp -M PAR -M XML::Twig -M File::Basename -M File::Path -M List::Util -M List::MoreUtils -M Hex::Record -M Win32::GUI -M POSIX -M Config::IniFiles -a checkmark_new.ico -a checkmark_new_small.ico -x -o QA_GUI.exe QA_GUI.pl
 # Doesn't work very well... or at all
@@ -1102,7 +1114,7 @@ sub Run_Click {
         
         #----- Read Test -----#
         
-        # Do read top/bottom tests, unless there is no --read command in the setup.
+        # Do read top/bottom tests, unless there is no --read command in the setup. Also do device-specific-data test if necessary.
         if (exists $commands{"--read"}) {
 			print $to_log_file FormatHeader("Read after programming");
             foreach my $mem_type (keys %memory_types) {
@@ -1195,231 +1207,257 @@ sub Run_Click {
                     $log_text->Append("\tRead programmed data ($mem_type): PASSED\r\n");
                 }
             }
-        
-			### TO DO: Maybe try to add a check for unique data... In progress below. Only checking one device.
             
             #----- Device-Specific-Data Test -----#
             
-            my %read_errors = ();	
-            my $read_totally_failed = 0;
-			foreach my $mem_type (keys %memory_types) {
-				my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
-				my @read_ranges = ();  # Will hold array references. Internal arrays will be [ range_start_addr, range_end_addr ].
-			
-				# Do a device-specific data test if there were any device-specific data files enabled in the XML.
-				if (exists $data_files{$mem_type}{"Unique"}{$firstUniquePCB}) {
-                    print $to_log_file FormatHeader("Read Device-specific Data");                
-                
-					# Key is address, value is an array: [ data, bank ].
-					# Will store all addresses and corresponding data in and around device-specific regions.
-					my %good_data = ();  
+			UNIQUE_DATA: foreach my $mem_type (keys %memory_types) {
+				foreach my $pcb_num (sort { $a <=> $b } keys %{$data_files{$mem_type}{"Unique"}}) {
+					# Do a device-specific data test if there were any device-specific data files enabled in the XML.
+					if (exists $data_files{$mem_type}{"Unique"}{$pcb_num}) {
+						print $to_log_file FormatHeader("Read Device-specific Data");  
 						
-					# Add all addresses and data in device-specific files to %goodData.
-					foreach my $file (@{$data_files{$mem_type}{"Unique"}}) {						
-						# Loop through all addresses on the part, trying to find which addresses are in the unique data file.
-						foreach my $bank (@banks) {
-							foreach my $addr ($bank .. $bank + $memory_types{$mem_type}{$bank} - 1) {
-								my @data = @{ReadDataFile($file, $mem_type, $addr, 1)};
-								$good_data{$addr} = [ $data[0], $bank ] if ($data[0] ne "not found");
-							}
-						}						
-					}
+						my %read_errors = ();	
+						my $read_totally_failed = 0;     
+						my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
+						my @read_ranges = ();  # Will hold array references. Internal arrays will be [ range_start_addr, range_end_addr ].
 					
-					# %good_data now contains all addresses and data in all device-specific files for the first PCB.
-					my @unique_addrs = sort keys %good_data;
-					# my $last_addr = $unique_addrs[0];
-					foreach my $i (0 .. $#unique_addrs) {
-						# Move on if this address is in the middle of a continuous range.
-						# Only care about addresses which are not surrounded by other unique data.
-						if (($i > 0) && ($i < $#unique_addrs)) {
-							next if (($unique_addrs[$i] == ($unique_addrs[$i - 1] + 1)) && ($unique_addrs[$i] == ($unique_addrs[$i + 1] - 1)));
-						}
+						# Key is address, value is an array: [ data, bank ].
+						# Will store all addresses and corresponding data in and around device-specific regions.
+						my %good_data = ();  
 						
-						my $start_of_range = 0;
-						my $end_of_range = 0;
-						
-						if ($i == 0) {
-							$start_of_range = 1;
-						} elsif ($unique_addrs[$i] != ($unique_addrs[$i - 1] + 1)) {
-							$start_of_range = 1;
-						}
-						
-						if ($i == $#unique_addrs) {
-							$end_of_range = 1;
-						} elsif ($unique_addrs[$i] != ($unique_addrs[$i + 1] - 1)) {
-							$end_of_range = 1;
-						}
-						
-						my $read_size = $read_size_max;
-						
-						# Find the relevant bank's index in the banks array.
-						my $idx = first_index {$_ == $good_data{$unique_addrs[$i]}[1]} @banks;
-						my $start_addr = undef;
-						
-						# First consider an address which is the start of a unique range.
-						if ($start_of_range) {
-							# If the current address is at the start of the bank, search for a previous bank to read.
-							if ($unique_addrs[$i] == $banks[$idx]) {
-								if ($idx != 0) {  # If this is the very first address in the part, don't try to read addresses before it.
+						# Find the addresses present in each device-specific data file.
+						foreach my $file (@{$data_files{$mem_type}{"Unique"}{$pcb_num}}) {
+							# Find the address regions present in this file. $unique_regions[0] = start address; $unique_regions[1] = number of bytes in region.
+							my @unique_regions = @{GetAddrsInFile($file)};
+							foreach my $region_ref (@unique_regions) {
+								# Read the data in this region from the file.
+								my @data = @{ReadDataFile($file, $mem_type, $region_ref->[0], $region_ref->[1])};
 								
-                                    # Limit the read to the number of bytes in the previous bank if it is smaller than $read_size. 
-                                    # Could go searching for more banks, but... this is good enough.
-                                    $read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size);
-                                    
-                                        #				    bank				bank size
-                                    $start_addr = $banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1]} - $read_size;
-                                }
-							} else {  # The address is the start of a range, but not the start of the bank.
-								# If there are fewer than $read_size addresses in the bank before this address, only read what is there.
-								$read_size = $unique_addrs[$i] - $banks[$idx] if (($unique_addrs[$i] - $banks[$idx]) < $read_size);
-								$start_addr = $unique_addrs[$i] - $read_size;							
-							}
-                            
-                            # Adjust $start_addr if it and other addresses in the range have already been covered.
-                            while ($read_size > 0) {
-                                if (exists $good_data{$start_addr}) {
-                                    $read_size--;
-                                    $start_addr++;
-                                }
-                            }
-                            
-                            # If read size goes all the way to 0, this whole range was covered by a previous range. Move on.
-                            next if ($read_size == 0);
-                            
-                            # Add a new anonymous array to the end of @read_ranges. I think that a start address should always be encountered before an end address,
-                            #   and that another start address won't be found before the end address of this range.
-                            # Don't add the new inner array if the end of the last range is directly before $start_addr. This will just be part of the same range
-                            #   and the end address of the inner array will be updated when the end of this unique range is found.
-                            push @read_ranges, [ $start_addr ] if ($read_ranges[-1][1] != $start_addr - 1);
-                            
-						}
-                        
-                        if ($end_of_range) {  # This address is at the end of a unique range, scan addresses after it.
-                            # If the current address is at the end of a bank, search for a later bank to read.
-                            #                          bank start  +     bank size                          - 1 = bank end
-                            if ($unique_addrs[$i] == ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1)) {
-                                if ($idx != $#banks) {  # If this is the very last address in the part, don't try to read addresses after it.
-                                
-                                    # Limit the read to the number of bytes in the next bank if it is smaller than $read_size_max.
-                                    $read_size = $memory_types{$mem_type}{$banks[$idx + 1]} if ($memory_types{$mem_type}{$banks[$idx + 1]} < $read_size_max);
-                                    $start_addr = $banks[$idx + 1];
-                                }
-                            } else {  # The address is the end of a range, but not the end of a bank.
-                                # If there are fewer than $read_size addresses in the bank after this address, only read what is there.
-                                #             bank start  + bank size                              - 1 - this addr = read size
-                                $read_size = $banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1 - $unique_addrs[$i];
-                                $start_addr = $unique_addrs[$i] + 1;     
-                            }
-                            
-                            # Place the end of the region in the second element of the last array within @read_ranges.
-                            # The inner array should already contain the start address for this range.
-                            $read_ranges[-1][1] = $start_addr + $read_size - 1;
-                        }
-                        
-                        # TODO: I don't know if this will work for a single-byte unique data, that is both the start and end of a range.
-                        Need to move the below foreach into the end_of_range if statement and change @data to come from $read_ranges.
-						
-						# Loop through all commmon data files looking for the defined range.
-						foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
-							my @data = @{ReadDataFile($file, $mem_type, $start_addr, $read_size)};
-							
-							# This should loop over $read_size number of addresses at the end of the bank.
-							foreach my $j (0 .. $#data) {
-								my $current_addr = $start_addr + $j;
-								
-								# If nothing yet recorded at this address, save either read data or blank data.
-								if (not exists $good_data{$current_addr}) {
-									if ($data[$j] eq "not found") {
-										$good_data{$current_addr} = [ $blank_data{$mem_type}, $banks[$idx - 1] ];
-									} else {
-										$good_data{$current_addr} = [ $data[$j], $banks[$idx - 1] ];
+								# For each address that has been read, identify which bank it is in and then store address, data, and bank in %good_data.
+								foreach my $i (0 .. $region_ref->[1] - 1) {
+									my $unique_bank = -1;
+									foreach my $bank (@banks) {
+										if (($region_ref->[0] + $i < $bank + $memory_types{$mem_type}{$bank}) && ($region_ref->[0] + $i >= $bank)) {
+											$unique_bank = $bank;
+											last;
+										}
 									}
-								} elsif (($data[$j] ne "not found") && ($good_data{$current_addr}[0] eq $blank_data{$mem_type})) {
-									# If valid data was found in this file, use it instead of the blank data that may have been assigned if 
-									#   another file was checked first and nothing was found there.
-									$good_data{$current_addr}[0] = $data[$j];
-								}									
+									
+									if ($unique_bank == -1) {
+										print $to_errors "ERROR: Device-specific address " . $region_ref->[0] + $i . " does not exist in any bank. Device-specific-data test aborted.\r\n";
+										$log_text->Append("\tRead device-specific data: FAILED\r\n");
+										$error_count++;
+										last UNIQUE_DATA;
+									}
+									
+									$good_data{$region_ref->[0] + $i} = [ $data[$i], $unique_bank ];
+								}
 							}
 						}
-                        
-                        # %good_data should now contain all addresses and corresponding data in all device-specific files,
-                        #   as well as the data from surrounding areas in common files (or blank data if there is no surrounding data).
-                        # Time to read it all out of the device and compare.                        
-                        foreach my $range_ref (@read_ranges) {
-                            print $to_log_file "----------\nRead device-specific data at " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . "\n----------\n";
-                        
-                            # Make a string containing the range of addresses to read and the memory type to read from.
-                            # If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
-                            my $range = "";
-                            if ($alignment{$mem_type} == 1) {
-                                $range = sprintf("%#x-%#x %s", $range_ref->[0], $range_ref->[1], $mem_type); 
-                            } else {
-                                # The physical address will be the byte address divided by two, and only have 1 physical for every other byte.
-                                my @physical_addresses = map {$_ % 2 == 0 ? $_ / 2 : ()} ($range_ref->[0] .. $range_ref->[1]);
-                                $range = sprintf("%#x-%#x %s", $physical_addresses[0], $physical_addresses[-1], $mem_type);
-                            }
-                            
-                            RunMISP("--read", $xml_out, $range);  # Read the specified range, hopefully unique data and some surrounding it.
-                            print $to_log_file $misp_output;
-                            Cleanup() if $cancel_clicked;
-                            return 1 if $cancel_clicked;
-                            
-                            # Throw the data returned from all addresses into an array.
-                            my @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g;
-                            
-                            if (scalar @data == 0) {
-                                print $to_errors "ERROR: During device-specific-data test, no data was able to be read from addresses " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . ".\r\n";
-                                $read_totally_failed = 1;
-                                $error_count++;
-                            }
-                            
-                            # This array acts the same as @good_data in other read sections. I'm renaming it to avoid a bit of confusion with %good_data used in this section.
-                            # This is byte-addressed data as read from the data file.
-                            my @real_data = ();
-                            push @real_data, $good_data{$_}[0] foreach ($range_ref->[0] .. $range_ref->[1]);
-                            
-                            if ($alignment{$mem_type} == 2) {
-                                # If alignment is 2, shift data about to make word strings that will match the MISP output.
-                                if ($reverse_endian) {  # I'm assuming "reverse endian" is big endian. It's poorly named, but deal with it.
-                                    my @index = map {$_ * 2} (0 .. ($#real_data - 1) / 2);  # Set up array with all even indices in the address array.
-                                    @real_data = map {sprintf("0x%02x%02x", hex $real_data[$_], hex $real_data[$_ + 1])} @index;
-                                } else {  # Little endian.
-                                    my @index = map {$_ * 2 + 1} (0 .. ($#real_data - 1) / 2);  # Set up array with all odd indices in the address array.
-                                    @real_data = map {sprintf("0x%02x%02x", hex $real_data[$_], hex $real_data[$_ - 1])} @index;
-                                }
-                            }
+						
+						# %good_data now contains all addresses and data in all device-specific files for the first PCB.
+						my @unique_addrs = sort keys %good_data;
+						
+						# Loop through all unique addresses to define ranges to read from the part.
+						foreach my $i (0 .. $#unique_addrs) {
+							# Move on if this address is in the middle of a continuous range.
+							# Only care about addresses which are not surrounded by other unique data.
+							if (($i > 0) && ($i < $#unique_addrs)) {
+								next if (($unique_addrs[$i] == ($unique_addrs[$i - 1] + 1)) && ($unique_addrs[$i] == ($unique_addrs[$i + 1] - 1)));
+							}
+							
+							my $start_of_range = 0;
+							my $end_of_range = 0;
+							
+							if ($i == 0) {
+								$start_of_range = 1;
+							} elsif ($unique_addrs[$i] != ($unique_addrs[$i - 1] + 1)) {
+								$start_of_range = 1;
+							}
+							
+							if ($i == $#unique_addrs) {
+								$end_of_range = 1;
+							} elsif ($unique_addrs[$i] != ($unique_addrs[$i + 1] - 1)) {
+								$end_of_range = 1;
+							}
+							
+							my $read_size = $read_size_max;
+							
+							# Find the relevant bank's index in the banks array.
+							my $idx = first_index {$_ == $good_data{$unique_addrs[$i]}[1]} @banks;
+							my $start_addr = undef;
+							
+							# First consider an address which is the start of a unique range.
+							if ($start_of_range) {
+								# If the current address is at the start of the bank, search for a previous bank to read.
+								if ($unique_addrs[$i] == $banks[$idx]) {
+									if ($idx != 0) {  # If this is the very first address in the part, don't try to read addresses before it.
+									
+										# Limit the read to the number of bytes in the previous bank if it is smaller than $read_size. 
+										# Could go searching for more banks, but... this is good enough.
+										$read_size = $memory_types{$mem_type}{$banks[$idx - 1]} if ($memory_types{$mem_type}{$banks[$idx - 1]} < $read_size);
+										
+											#				    bank				bank size
+										$start_addr = $banks[$idx - 1] + $memory_types{$mem_type}{$banks[$idx - 1]} - $read_size;
+									}
+								} else {  # The address is the start of a range, but not the start of the bank.
+									# If there are fewer than $read_size addresses in the bank before this address, only read what is there.
+									$read_size = $unique_addrs[$i] - $banks[$idx] if (($unique_addrs[$i] - $banks[$idx]) < $read_size);
+									$start_addr = $unique_addrs[$i] - $read_size;							
+								}
+								
+								# Adjust $start_addr if it and other addresses in the range have already been covered.
+								while ($read_size > 0) {
+									if (exists $good_data{$start_addr}) {
+										$read_size--;
+										$start_addr++;
+									} else {
+										last;
+									}
+								}
+								
+								# If read size goes all the way to 0, this whole range was covered by a previous range. Move on.
+								next if ($read_size == 0);
+								
+								# Add a new anonymous array to the end of @read_ranges. I think that a start address should always be encountered before an end address,
+								#   and that another start address won't be found before the end address of this range.
+								# Don't add the new inner array if the end of the last range is directly before $start_addr. This will just be part of the same range
+								#   and the end address of the inner array will be updated when the end of this unique range is found.
+								push @read_ranges, [ $start_addr ] if ((scalar @read_ranges == 0) || ($read_ranges[-1][1] != $start_addr - 1));
+								
+							}
+							
+							if ($end_of_range) {  # This address is at the end of a unique range, scan addresses after it.
+								# If the current address is at the end of a bank, search for a later bank to read.
+								#                          bank start  +     bank size                          - 1 = bank end
+								if ($unique_addrs[$i] == ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - 1)) {
+									if ($idx != $#banks) {  # If this is the very last address in the part, don't try to read addresses after it.
+									
+										# Limit the read to the number of bytes in the next bank if it is smaller than $read_size_max.
+										$read_size = $memory_types{$mem_type}{$banks[$idx + 1]} if ($memory_types{$mem_type}{$banks[$idx + 1]} < $read_size_max);
+										$start_addr = $banks[$idx + 1];
+									}
+								} else {  # The address is the end of a range, but not the end of a bank.									
+									$start_addr = $unique_addrs[$i] + 1;
+									# Limit the read to the number of bytes remaining in the bank if it is smaller than $read_size_max.
+									#             bank start  + bank size                              - this addr = read size
+									$read_size = $banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - $start_addr if ($banks[$idx] + $memory_types{$mem_type}{$banks[$idx]} - $start_addr < $read_size_max);
+								}
+								
+								# Place the end of the region in the second element of the last array within @read_ranges.
+								# The inner array should already contain the start address for this range.
+								$read_ranges[-1][1] = $start_addr + $read_size - 1;
+							}
+						}
+							
+						# All ranges are now defined, next read good data from the files, and then read the part.
+						foreach my $range_ref (@read_ranges) {
+							print $to_log_file "----------\nRead device-specific data at " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . "\n----------\n";
+							
+							# Loop through all commmon data files looking for the defined range.
+							foreach my $file (@{$data_files{$mem_type}{"Common"}}) {
+								my @data = @{ReadDataFile($file, $mem_type, $range_ref->[0], $range_ref->[1] - $range_ref->[0] + 1)};
+								
+								# Loop over all data read out and place it in %good_data if necessary.
+								foreach my $j (0 .. $#data) {
+									my $current_addr = $range_ref->[0] + $j;
+									
+									# Skip this address if it is in the unique areas; it has already been added to %good_data.
+									next if (first { $_ == $current_addr } @unique_addrs);
+									
+									# If nothing yet recorded at this address, save either read data or blank data.
+									if (not exists $good_data{$current_addr}) {
+										if ($data[$j] eq "not found") {
+											$good_data{$current_addr} = [ $blank_data{$mem_type} ];
+										} else {
+											$good_data{$current_addr} = [ $data[$j] ];
+										}
+									} elsif (($data[$j] ne "not found") && ($good_data{$current_addr}[0] eq $blank_data{$mem_type})) {
+										# If valid data was found in this file, use it instead of the blank data that may have been assigned if 
+										#   another file was checked first and nothing was found there.
+										$good_data{$current_addr}[0] = $data[$j];
+									}									
+								}
+							}
+							
+							# %good_data should now contain all addresses and corresponding data in the range,
+							#   including the data from surrounding areas in common files (or blank data if there is no surrounding data).
+							# Time to read it all out of the device and compare.
+						
+							# Make a string containing the range of addresses to read and the memory type to read from.
+							# If alignment is 2, need to translate the hex file byte addresses into physical word addresses by dividing by 2.
+							my $range = "";
+							if ($alignment{$mem_type} == 1) {
+								$range = sprintf("%#x-%#x %s", $range_ref->[0], $range_ref->[1], $mem_type); 
+							} else {
+								# The physical address will be the byte address divided by two, and only have 1 physical for every other byte.
+								my @physical_addresses = map {$_ % 2 == 0 ? $_ / 2 : ()} ($range_ref->[0] .. $range_ref->[1]);
+								$range = sprintf("%#x-%#x %s", $physical_addresses[0], $physical_addresses[-1], $mem_type);
+							}
+							
+							my $pcb_mask = 1 << ($pcb_num - 1);
+							$pcb_mask = sprintf("%#x", $pcb_mask);
+							RunMISP("--read", $xml_out, $range . " -s " . $pcb_mask);  # Read the specified range, hopefully unique data and some surrounding it.
+							print $to_log_file $misp_output;
+							Cleanup() if $cancel_clicked;
+							return 1 if $cancel_clicked;
+							
+							# Throw the data returned from all addresses into an array.
+							my @data = $misp_output =~ m/Device Memory.*= 0x([0-9a-fA-F]*)/g;
+							
+							if (scalar @data == 0) {
+								print $to_errors "ERROR: During device-specific-data test, no data was able to be read from addresses " . sprintf("0x%X-0x%X", $range_ref->[0], $range_ref->[1]) . ".\r\n";
+								$read_totally_failed = 1;
+								$error_count++;
+							}
+							
+							# This array acts the same as @good_data in other read sections. I'm renaming it to avoid a bit of confusion with %good_data used in this section.
+							# This is byte-addressed data as read from the data file.
+							my @real_data = ();
+							push @real_data, $good_data{$_}[0] foreach ($range_ref->[0] .. $range_ref->[1]);
+							
+							if ($alignment{$mem_type} == 2) {
+								# If alignment is 2, shift data about to make word strings that will match the MISP output.
+								if ($reverse_endian) {  # I'm assuming "reverse endian" is big endian. It's poorly named, but deal with it.
+									my @index = map {$_ * 2} (0 .. ($#real_data - 1) / 2);  # Set up array with all even indices in the address array.
+									@real_data = map {sprintf("0x%02x%02x", hex $real_data[$_], hex $real_data[$_ + 1])} @index;
+								} else {  # Little endian.
+									my @index = map {$_ * 2 + 1} (0 .. ($#real_data - 1) / 2);  # Set up array with all odd indices in the address array.
+									@real_data = map {sprintf("0x%02x%02x", hex $real_data[$_], hex $real_data[$_ - 1])} @index;
+								}
+							}
 
-                            # If the alignment is 1 and the algorithm author was lazy, mask bytes as needed.
-                            if ($alignment{$mem_type} == 1 && $bytes_per_read > 1) {
-                                # Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
-                                foreach my $i (0 .. $#data) {
-                                    $data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
-                                    my $offset = ($i % $bytes_per_read) * 2;
-                                    $offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
-                                    $data[$i] = substr($data[$i], $offset, 2);
-                                }
-                            }
-                            
-                            # Check to make sure the array only contains correct data.
-                            foreach my $i (0 .. $#data) {
-                                $read_errors{$range_ref->[0] + $i} = $data[$i] if hex $data[$i] != hex $real_data[$i];
-                            }
-                        }
+							# If the alignment is 1 and the algorithm author was lazy, mask bytes as needed.
+							if ($alignment{$mem_type} == 1 && $bytes_per_read > 1) {
+								# Pick out the proper byte if there are multiple bytes reported for each address. Pad with leading 0's first.
+								foreach my $i (0 .. $#data) {
+									$data[$i] = sprintf("%0" . (2 * $bytes_per_read) . "x", hex $data[$i]) if (length $data[$i] < (2 * $bytes_per_read));
+									my $offset = ($i % $bytes_per_read) * 2;
+									$offset = ($bytes_per_read * 2) - $offset - 2 if $reverse_endian;
+									$data[$i] = substr($data[$i], $offset, 2);
+								}
+							}
+							
+							# Check to make sure the array only contains correct data.
+							foreach my $i (0 .. $#data) {
+								$read_errors{$range_ref->[0] + $i} = $data[$i] if hex $data[$i] != hex $real_data[$i];
+							}
+						}
+											
+						# Display device-specific read errors if any occurred.
+						if ($read_totally_failed) {
+							$log_text->Append("\tRead device-specific data (PCB$pcb_num $mem_type): FAILED\r\n");
+						} elsif (scalar (keys %read_errors)) {
+							$log_text->Append("\tRead device-specific data (PCB$pcb_num $mem_type): FAILED\r\n");
+							print $to_errors "ERROR: Device-specific-data test for PCB$pcb_num failed at address " . sprintf("%#x", $_) . ".\r\n" . 
+								"    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
+							$error_count += scalar keys %read_errors;
+						} else {
+							$log_text->Append("\tRead device-specific data (PCB$pcb_num $mem_type): PASSED\r\n");
+						}
 					}
 				}
 			}
-                                        
-            # Display device-specific read errors if any occurred.
-            if ($read_totally_failed) {
-                $log_text->Append("\tRead device-specific data: FAILED\r\n");
-            } elsif (scalar (keys %read_errors)) {
-                $log_text->Append("\tRead device-specific data: FAILED\r\n");
-                print $to_errors "ERROR: Device-specific data did not match data file at address " . sprintf("%#x", $_) . ".\r\n" . 
-                    "    Data read was $read_errors{$_}.\r\n" foreach (keys %read_errors);
-                $error_count += scalar keys %read_errors;
-            } else {
-                $log_text->Append("\tRead device-specific data: PASSED\r\n");
-            }
 			### End of in-progress stuff
 			
 			
@@ -1521,6 +1559,7 @@ sub Run_Click {
 			". The default is 60s.\r\n" if $cfg->val('system', 'globalTimeout') ne "60s";
 		print $to_warnings "WARNING: csMISPV3.ini non-default value: fpgaClock = " . $cfg->val('system', 'bufferSize') .
 			". The default is 4096.\r\n" if $cfg->val('system', 'bufferSize') != 4096;
+		print $to_warnings "WARNING: csMISPV3.ini contains more than one Section. Do you have an elf file enabled?\r\n" if ((scalar $cfg->Sections()) > 1);
 			
 		$log_text->Append("\tDefault csMISPV3.ini: " . (($warning_log =~ m/csMISPV3\.ini/) ? "WARNING" : "PASSED") . "\r\n");
 	}
@@ -1899,6 +1938,31 @@ sub RunMISP {
 			return "ERROR";
 		}
 	}
+	
+	# Get an array of all addresses present in the data file. Each element of the array will be an array 
+	#   reference corresponding to one contiguous memory region. The first element of this array is the 
+	#   region start address and the second element is the number of bytes in the region.
+	# Arg1: $file - File from which to get addresses.
+	# Arg2: $mem_type - Memory type that file is associated with.
+	# Returns: Array reference described above.
+	sub GetAddrsInFile {
+		my ($file, $mem_type) = @_;
+		my $regions_ref = undef;
+		
+		# Set up new data file if the file has not yet been seen.
+        my $status = OpenDataFile($file, $mem_type) if not exists $open_files{$file};
+		
+		# OpenDataFile() will return 1 if it fails to open the file. Cancel the write, if so.
+        return "ERROR" if $status;
+		
+		if ($open_files{$file}{"type"} eq "hex" || $open_files{$file}{"type"} eq "srec") {
+			$regions_ref = $open_files{$file}{"data"}->GetRegions();
+		} else {
+			return "ERROR";
+		}
+		
+		return $regions_ref;
+	}
         
 
     # EX - Reading from a hex file. Works for intel hex or srec
@@ -1996,7 +2060,7 @@ sub AddDataFiles {
 		if (substr($file, 0, 1) eq ".") {
 			$file = $datafile_dir . substr($file, 2);
 		} else {
-			print $to_warnings "WARNING: $file not referenced using relative path.\r\n";
+			print $to_warnings "WARNING: Data file not referenced using relative path: $file.\r\n";
 		}
 		
 		# If a common data file, add it to the array of common data files.
@@ -2009,7 +2073,7 @@ sub AddDataFiles {
 		if ($elt->parent()->gi() eq "DeviceData") {
 			my $dev = $elt->parent()->parent();
 			my $pcb = $dev->first_child("PCB")->text();
-			$data_files{$elt->att("Memory_Type")}{"Unique"}{$pcb} = $file;
+			push @{$data_files{$elt->att("Memory_Type")}{"Unique"}{$pcb}}, $file;
 			$firstUniquePCB = $pcb if ((not defined $firstUniquePCB) || ($firstUniquePCB > $pcb));
 		}
     }
