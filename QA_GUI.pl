@@ -655,17 +655,6 @@ sub Run_Click {
 						}
 					}
 				}
-
-				#DEPRECATED, moved into the above loops
-				# If a bank is smaller than the default number of bytes to read, only read as many
-				#   bytes as there are. If that small bank is the only bank, don't bother reading it twice.
-				# if ($size <= $read_size) {
-					# $read_once{$mem_type} = 1 if $min_bank == $max_bank;
-				# }
-				
-				# DEPRECATED
-				# Set up hash containing addresses to read at the top of the memory type.
-				# $addresses{$mem_type}{"top"} = [$min_bank .. $min_bank + $read_size - 1];
 			
 				# Don't read the bottom of the memory if the top covered the whole thing. Unlikely... but let's check anyway.
 				# Also set the "bottom" address to the last in the top array. This will only be used when finding a middle address for verify.
@@ -675,10 +664,6 @@ sub Run_Click {
 				}
 
 				$read_size = ($alignment{$mem_type} == 1) ? $read_size_max : $read_size_max * 2;
-			
-				# DEPRECATED
-				# Set up hash containing addresses to read at the bottom of the memory type.
-				# $addresses{$mem_type}{"bottom"} = [$max_bank + $size - $read_size .. $max_bank + $size - 1];
 				
 				# Search through all known data files to find which contains the highest address.
 				# Right now, this just looks for a file that has the highest address, but not the whole range to be read.
@@ -1704,8 +1689,6 @@ sub RunMISP {
         return "NO_COMMAND";
 	} else {
         # Perform MISP step
-		# print $to_errors "Running: C:\\CheckSum\\MISP\\\"Fixture USBDrive\"\\Bin\\csMISPV3.exe -c $xml $command $options\r\n";
-		# my $call_string = "\"C:\\CheckSum\\MISP\\Fixture USBDrive\\Bin\\csMISPV3.exe\" -c $xml $command $options";
 		my $call_string = '"' . $datafile_dir . "Bin\\csMISPV3.exe\" -c $xml $command $options";
 		
 		my $misp_pid = open my $misp_pipe, '-|', $call_string or die "ERROR: Couldn't open pipe to csMISPV3.exe: $!";
