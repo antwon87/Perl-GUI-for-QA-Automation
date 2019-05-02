@@ -216,6 +216,10 @@ my $pps_check = $main->AddCheckbox(-text => 'PPS',
 my $unique_check = $main->AddCheckbox(-text => 'Read unique data from all PCBs',
 									  -top => $append_check->Top() + $append_check->Height() + $body_above,
 									  -left => $body_margin);
+									  
+my $program_once_check = $main->AddCheckbox(-text => 'Program once',
+										    -top => $unique_check->Top(),
+											-left => $pps_check->Left());
 
 my $commands_label = $main->AddLabel(-text => 'Supported Commands',
 							-top => $unique_check->Top() + $unique_check->Height() + $header_above,
@@ -457,6 +461,7 @@ sub Run_Click {
 	my $even_odd = $even_odd_check->Checked();
 	my $append = $append_check->Checked();
 	my $unique_test_all = $unique_check->Checked();
+	my $program_once = $program_once_check->Checked();
 	$max_port = 1;
 	my $num_MWs = 1;
 	$datafile_dir = $pps_check->Checked() ? $pps_datafile_dir : $default_datafile_dir;
@@ -980,15 +985,17 @@ sub Run_Click {
         }
         
         # Program it again to make sure you can program a pre-programmed chip
-        @test_result = RunMISP("-p", $xml_out);
-		Cleanup() if $cancel_clicked;
-		return 1 if $cancel_clicked;
-		print $to_log_file FormatHeader("Program again") . $misp_output;
-        $log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
-        if ($test_result[0] eq "FAILED") {
-            print $to_errors "ERROR: Programming failed when the chip is already programmed.\r\n";
-            $error_count++;
-        }
+		if ($program_once != 1) {
+			@test_result = RunMISP("-p", $xml_out);
+			Cleanup() if $cancel_clicked;
+			return 1 if $cancel_clicked;
+			print $to_log_file FormatHeader("Program again") . $misp_output;
+			$log_text->Append("\tProgram while already programmed: $test_result[0]\r\n");
+			if ($test_result[0] eq "FAILED") {
+				print $to_errors "ERROR: Programming failed when the chip is already programmed.\r\n";
+				$error_count++;
+			}
+		}
         
         # Do a blank check
         @test_result = RunMISP("-b", $xml_out);
