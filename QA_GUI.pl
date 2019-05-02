@@ -1201,12 +1201,11 @@ sub Run_Click {
             #----- Device-Specific-Data Test -----#
             
 			UNIQUE_DATA: foreach my $mem_type (keys %memory_types) {
-				my @pcbs_to_test = ($unique_test_all) ? ( sort { $a <=> $b } keys %{$data_files{$mem_type}{"Unique"}} ) : ( $firstUniquePCB );
-				foreach my $pcb_num (@pcbs_to_test) {
-					# Do a device-specific data test if there were any device-specific data files enabled in the XML.
-					if (exists $data_files{$mem_type}{"Unique"}{$pcb_num}) {
-						print $to_log_file FormatHeader("Read Device-specific Data");  
-						
+				# Do a device-specific data test if there were any device-specific data files enabled in the XML.
+				if (exists $data_files{$mem_type}{"Unique"}) {
+					print $to_log_file FormatHeader("Read Device-specific Data"); 
+					my @pcbs_to_test = ($unique_test_all) ? ( sort { $a <=> $b } keys %{$data_files{$mem_type}{"Unique"}} ) : ( $firstUniquePCB );
+					foreach my $pcb_num (@pcbs_to_test) {
 						my %read_errors = ();	
 						my $read_totally_failed = 0;     
 						my @banks = sort { $a <=> $b } keys %{$memory_types{$mem_type}};
@@ -1464,9 +1463,6 @@ sub Run_Click {
 					}
 				}
 			}
-			### End of in-progress stuff
-			
-			
         }
     }
     
